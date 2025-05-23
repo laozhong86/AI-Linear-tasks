@@ -1,0 +1,162 @@
+---
+description: Guidelines for implementing and maintaining user interface components
+globs: scripts/modules/ui.js
+alwaysApply: false
+---
+以下是翻译后的文档内容，采用 Markdown 格式：
+
+```markdown
+---
+description: 用户界面组件的实现和维护指南
+globs: scripts/modules/ui.js
+alwaysApply: false
+---
+
+# 用户界面实现指南
+
+## 核心用户界面组件原则
+
+- **功能范围分离**：
+  - ✅ **应做**：将显示逻辑与业务逻辑分开
+  - ✅ **应做**：从其他模块导入数据处理函数
+  - ❌ **不应做**：在用户界面函数中包含任务操作
+  - ❌ **不应做**：与其他模块创建循环依赖
+
+- **标准显示模式**：
+  ```javascript
+  // ✅ **应做**：遵循此模式用于显示函数
+  /**
+   * 显示任务信息
+   * @param {Object} task - 要显示的任务
+   */
+  function displayTaskInfo(task) {
+    console.log(boxen(
+      chalk.white.bold(`任务: #${task.id} - ${task.title}`),
+      { padding: 1, borderColor: 'blue', borderStyle: 'round' }
+    ));
+  }
+  ```
+
+## 视觉样式标准
+
+- **配色方案**：
+  - 使用 `chalk.blue` 用于信息性消息
+  - 使用 `chalk.green` 用于成功消息
+  - 使用 `chalk.yellow` 用于警告
+  - 使用 `chalk.red` 用于错误
+  - 使用 `chalk.cyan` 用于提示和高亮
+  - 使用 `chalk.magenta` 用于子任务相关信息
+
+- **边框样式**：
+  ```javascript
+  // ✅ **应做**：根据内容类型使用一致的边框样式
+  // 对于成功消息：
+  boxen(content, { 
+    padding: 1, 
+    borderColor: 'green', 
+    borderStyle: 'round', 
+    margin: { top: 1 } 
+  })
+
+  // 对于错误：
+  boxen(content, { 
+    padding: 1, 
+    borderColor: 'red', 
+    borderStyle: 'round'
+  })
+
+  // 对于信息：
+  boxen(content, { 
+    padding: 1, 
+    borderColor: 'blue', 
+    borderStyle: 'round', 
+    margin: { top: 1, bottom: 1 } 
+  })
+  ```
+
+## 表格显示指南
+
+- **表格结构**：
+  - 使用 [`cli-table3`](mdc:node_modules/cli-table3/README.md) 用于一致的表格渲染
+  - 包含带有加粗格式的彩色表头
+  - 使用适当的列宽以确保可读性
+
+  ```javascript
+  // ✅ **应做**：创建结构良好的表格
+  const table = new Table({
+    head: [
+      chalk.cyan.bold('ID'),
+      chalk.cyan.bold('标题'),
+      chalk.cyan.bold('状态'),
+      chalk.cyan.bold('优先级'),
+      chalk.cyan.bold('依赖项')
+    ],
+    colWidths: [5, 40, 15, 10, 20]
+  });
+  
+  // 添加内容行
+  table.push([
+    task.id,
+    truncate(task.title, 37),
+    getStatusWithColor(task.status),
+    chalk.white(task.priority || 'medium'),
+    formatDependenciesWithStatus(task.dependencies, allTasks, true)
+  ]);
+  
+  console.log(table.toString());
+  ```
+
+## 加载指示器
+
+- **动画标准**：
+  - 使用 [`ora`](mdc:node_modules/ora/readme.md) 用于加载动画
+  - 正确创建和停止加载指示器
+
+  ```javascript
+  // ✅ **应做**：正确管理加载状态
+  const loadingIndicator = startLoadingIndicator('正在处理任务数据...');
+  try {
+    // 执行异步操作...
+    stopLoadingIndicator(loadingIndicator);
+    // 显示成功消息
+  } catch (error) {
+    stopLoadingIndicator(loadingIndicator);
+    // 显示错误消息
+  }
+  ```
+
+## 辅助函数
+
+- **状态格式化**：
+  - 使用 `getStatusWithColor` 用于一致的状态显示
+  - 使用 `formatDependenciesWithStatus` 用于依赖项列表
+  - 使用 `truncate` 处理可能超出显示范围的文本
+
+- **进度报告**：
+  - 使用视觉指示器表示进度（进度条、百分比）
+  - 包含数值和视觉表示
+
+  ```javascript
+  // ✅ **应做**：显示清晰的进度指示器
+  console.log(`${chalk.cyan('任务:')} ${completedTasks}/${totalTasks} (${completionPercentage.toFixed(1)}%)`);
+  console.log(`${chalk.cyan('进度:')} ${createProgressBar(completionPercentage)}`);
+  ```
+
+## 命令建议
+
+- **操作建议**：
+  - 在命令完成后提供下一步操作建议
+  - 使用一致的格式用于建议命令
+
+  ```javascript
+  // ✅ **应做**：显示建议的下一步操作
+  console.log(boxen(
+    chalk.white.bold('下一步操作:') + '\n\n' +
+    `${chalk.cyan('1.')} 运行 ${chalk.yellow('task-master list')} 查看所有任务\n` +
+    `${chalk.cyan('2.')} 运行 ${chalk.yellow('task-master show --id=' + newTaskId)} 查看详细信息`,
+    { padding: 1, borderColor: 'cyan', borderStyle: 'round', margin: { top: 1 } }
+  ));
+  ```
+
+参考 [`ui.js`](mdc:scripts/modules/ui.js) 查看实现示例，以及参考 [`new_features.mdc`](mdc:.cursor/rules/new_features.mdc) 查看集成指南。
+```

@@ -1,0 +1,155 @@
+---
+description: Task Master AI提供商和模型管理指南。
+globs: 
+alwaysApply: false
+---
+# Task Master AI提供商管理
+
+本规则指导AI助手如何查看、配置和与Task Master支持的不同AI提供商和模型进行交互。有关服务层的内部实现细节，请参见[`ai_services.mdc`](mdc:.cursor/rules/ai_services.mdc)。
+
+-   **主要交互方式:**
+    -   使用`models` MCP工具或`task-master models` CLI命令来管理AI配置。详细的命令/工具用法请参见[`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc)。
+
+-   **配置角色:**
+    -   Task Master为AI模型使用三种角色:
+        -   `main`: 用于一般任务的主要模型(生成、更新)。
+        -   `research`: 当使用`--research`标志或`research: true`参数时使用的模型(通常是具有网络访问或专业知识的模型)。
+        -   `fallback`: 当主要模型(`main`)失败时使用的模型。
+    -   每个角色都配置有特定的`provider:modelId`对(例如`openai:gpt-4o`)。
+
+-   **查看配置和可用模型:**
+    -   要查看每个角色的当前模型分配和所有可分配的模型列表:
+        -   **MCP工具:** `models`(无参数调用或使用`listAvailableModels: true`)
+        -   **CLI命令:** `task-master models`
+    -   输出将显示当前分配的模型和其他模型列表,前缀为其提供商(例如`google:gemini-2.5-pro-exp-03-25`)。
+
+-   **为角色设置模型:**
+    -   要为角色分配模型:
+        -   **MCP工具:** 使用`setMain`、`setResearch`或`setFallback`参数的`models`。
+        -   **CLI命令:** 带有`--set-main`、`--set-research`或`--set-fallback`标志的`task-master models`。
+    -   **重要提示:** 提供模型ID进行设置时,**不要包含`provider:`前缀**。仅使用模型ID本身。
+        -   ✅ **正确做法:** `models(setMain='gpt-4o')`或`task-master models --set-main=gpt-4o`
+        -   ❌ **错误做法:** `models(setMain='openai:gpt-4o')`或`task-master models --set-main=openai:gpt-4o`
+    -   工具/命令将根据模型ID自动确定提供商。
+
+-   **设置自定义模型(Ollama/OpenRouter):**
+    -   要为Ollama或OpenRouter设置不在内部列表中的模型ID:
+        -   **MCP工具:** 使用`models`的`set<Role>`以及`ollama: true`或`openrouter: true`。
+            -   示例: `models(setMain='my-custom-ollama-model', ollama=true)`
+            -   示例: `models(setMain='some-openrouter-model', openrouter=true)`
+        -   **CLI命令:** 使用`task-master models`的`--set-<role>`以及`--ollama`或`--openrouter`。
+            -   示例: `task-master models --set-main=my-custom-ollama-model --ollama`
+            -   示例: `task-master models --set-main=some-openrouter-model --openrouter`
+        -   **交互式设置:** 使用`task-master models --setup`并选择`Ollama (Enter Custom ID)`或`OpenRouter (Enter Custom ID)`选项。
+    -   **OpenRouter验证:** 设置自定义OpenRouter模型时,Taskmaster会尝试通过OpenRouter API验证ID。
+    -   **Ollama:** 自定义Ollama模型不进行实时验证;请确保模型在您的Ollama服务器上可用。
+
+-   **支持的提供商和所需API密钥:**
+    -   Task Master通过Vercel AI SDK与各种提供商集成。
+    -   **API密钥对大多数提供商来说是必需的**,必须正确配置。
+    -   **密钥位置** (参见[`dev_workflow.mdc`](mdc:.cursor/rules/dev_workflow.mdc) - 配置管理):
+        -   **MCP/Cursor:** 在`.cursor/mcp.json`的`env`部分设置密钥。
+        -   **CLI:** 在项目根目录的`.env`文件中设置密钥。
+    -   **提供商列表和密钥:**
+        -   **`anthropic`**: 需要`ANTHROPIC_API_KEY`。
+        -   **`google`**: 需要`GOOGLE_API_KEY`。
+        -   **`openai`**: 需要`OPENAI_API_KEY`。
+        -   **`perplexity`**: 需要`PERPLEXITY_API_KEY`。
+        -   **`xai`**: 需要`XAI_API_KEY`。
+        -   **`mistral`**: 需要`MISTRAL_API_KEY`。
+        -   **`azure`**: 需要`AZURE_OPENAI_API_KEY`和`AZURE_OPENAI_ENDPOINT`。
+        -   **`openrouter`**: 需要`OPENROUTER_API_KEY`。
+        -   **`ollama`**: 可能需要`OLLAMA_API_KEY`(当前不支持)*和*`OLLAMA_BASE_URL`(默认:`http://localhost:11434/api`)。*请检查具体设置。*
+
+-   **故障排除:**
+    -   如果AI命令失败(尤其是在MCP上下文中):
+        1.  **验证API密钥:** 确保*所选提供商*的正确API密钥(检查`models`输出)存在于适当位置(`.cursor/mcp.json` env或`.env`)。
+        2.  **检查模型ID:** 确保为角色设置的模型ID有效(使用`models` listAvailableModels/`task-master models`)。
+        3.  **提供商状态:** 检查外部AI提供商服务的状态。
+        4.  **重启MCP:** 如果对配置或提供商代码进行了更改,请重启MCP服务器。
+
+## 添加新的AI提供商(Vercel AI SDK方法)
+
+按照以下步骤集成具有官方Vercel AI SDK适配器(`@ai-sdk/<provider>`)的新AI提供商:
+
+1.  **安装依赖:**
+    -   安装提供商特定的包:
+        ```bash
+        npm install @ai-sdk/<provider-name>
+        ```
+
+2.  **创建提供商模块:**
+    -   在`src/ai-providers/`中创建名为`<provider-name>.js`的新文件。
+    -   使用现有模块(`openai.js`、`anthropic.js`等)作为模板。
+    -   **导入:**
+        -   从`@ai-sdk/<provider-name>`导入提供商的`create<ProviderName>`函数。
+        -   从核心`ai`包导入`generateText`、`streamText`、`generateObject`。
+        -   从`../../scripts/modules/utils.js`导入`log`工具。
+    -   **实现核心功能:**
+        -   `generate<ProviderName>Text(params)`:
+            -   接受`params`(apiKey、modelId、messages等)。
+            -   实例化客户端: `const client = create<ProviderName>({ apiKey });`
+            -   调用`generateText({ model: client(modelId), ... })`。
+            -   返回`result.text`。
+            -   包含基本验证和try/catch错误处理。
+        -   `stream<ProviderName>Text(params)`:
+            -   与`generateText`结构类似。
+            -   调用`streamText({ model: client(modelId), ... })`。
+            -   返回完整的流结果对象。
+            -   包含基本验证和try/catch。
+        -   `generate<ProviderName>Object(params)`:
+            -   结构类似。
+            -   调用`generateObject({ model: client(modelId), schema, messages, ... })`。
+            -   返回`result.object`。
+            -   包含基本验证和try/catch。
+    -   **导出函数:** 导出三个已实现的函数(`generate<ProviderName>Text`、`stream<ProviderName>Text`、`generate<ProviderName>Object`)。
+
+3.  **与统一服务集成:**
+    -   打开`scripts/modules/ai-services-unified.js`。
+    -   **导入:** 添加`import * as <providerName> from '../../src/ai-providers/<provider-name>.js';`
+    -   **映射:** 向`PROVIDER_FUNCTIONS`映射添加条目:
+        ```javascript
+        '<provider-name>': {
+            generateText: <providerName>.generate<ProviderName>Text,
+            streamText: <providerName>.stream<ProviderName>Text,
+            generateObject: <providerName>.generate<ProviderName>Object
+        },
+        ```
+
+4.  **更新配置管理:**
+    -   打开`scripts/modules/config-manager.js`。
+    -   **`MODEL_MAP`:** 将新的`<provider-name>`键添加到从`supported-models.json`加载的`MODEL_MAP`中(或确保如果先更新`supported-models.json`,加载会动态处理新提供商)。
+    -   **`VALID_PROVIDERS`:** 确保新的`<provider-name>`包含在`VALID_PROVIDERS`数组中(如果从`MODEL_MAP`键派生,这应该自动发生)。
+    -   **API密钥处理:**
+        -   使用正确的环境变量名(例如`PROVIDER_API_KEY`)更新`_resolveApiKey`和`isApiKeySet`中的`keyMap`。
+        -   更新`getMcpApiKeyStatus`中的`switch`语句以检查`mcp.json`中的相应键及其占位符值。
+        -   为新提供商向`getMcpApiKeyStatus`中的`switch`语句添加一个case,包括其占位符字符串(如果适用)。
+    -   **Ollama例外:** 如果添加Ollama或其他*不*需要API密钥的提供商,在`isApiKeySet`和`getMcpApiKeyStatus`的开头添加特定检查,立即为该提供商返回`true`。
+
+5.  **更新支持的模型列表:**
+    -   编辑`scripts/modules/supported-models.json`。
+    -   为`<provider-name>`添加新键。
+    -   在提供商键下添加模型对象数组,每个对象包括:
+        -   `id`: 特定模型标识符(例如`claude-3-opus-20240229`)。
+        -   `name`: 用户友好名称(可选)。
+        -   `swe_score`, `cost_per_1m_tokens`: (可选)添加性能/成本数据(如果可用)。
+        -   `allowed_roles`: 模型适用的角色数组(`"main"`, `"research"`, `"fallback"`)。
+        -   `max_tokens`: (可选但推荐)模型的最大令牌限制。
+
+6.  **更新环境示例:**
+    -   将新的`PROVIDER_API_KEY`添加到`.env.example`。
+    -   将新的`PROVIDER_API_KEY`及其占位符(`YOUR_PROVIDER_API_KEY_HERE`)添加到`.cursor/mcp.json.example`(如果存在)中`taskmaster-ai`的`env`部分或更新说明。
+
+7.  **添加单元测试:**
+    -   创建`tests/unit/ai-providers/<provider-name>.test.js`。
+    -   模拟`@ai-sdk/<provider-name>`模块和核心`ai`模块函数(`generateText`、`streamText`、`generateObject`)。
+    -   为每个导出的函数(`generate<ProviderName>Text`等)编写测试以验证:
+        -   正确的客户端实例化。
+        -   传递给模拟Vercel AI SDK函数的正确参数。
+        -   正确的结果处理。
+        -   错误处理(缺少API密钥、SDK错误)。
+
+8.  **文档:**
+    -   更新任何相关文档(如`README.md`或其他规则),提及支持的提供商或配置。
+
+*(注意: 对于**没有**官方Vercel AI SDK适配器的提供商,该过程将涉及在`src/ai-providers/<provider-name>.js`模块中直接使用提供商自己的SDK或API,并手动构建与统一服务层兼容的响应,这显著更复杂。)*

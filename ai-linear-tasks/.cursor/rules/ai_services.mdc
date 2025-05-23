@@ -1,0 +1,101 @@
+---
+description: 统一 AI 服务层交互指南
+globs: scripts/modules/ai-services-unified.js, scripts/modules/task-manager/*.js, scripts/modules/commands.js
+---
+
+# AI 服务层指南
+
+本文档概述了通过 Task Master 的统一 AI 服务层（`ai-services-unified.js`）与大语言模型（LLMs）交互的架构和使用模式。目标是集中化配置、提供商选择、API 密钥管理、故障转移逻辑和错误处理。
+
+**核心组件：**
+
+*   **配置（`.taskmasterconfig` 和 [`config-manager.js`](mdc:scripts/modules/config-manager.js)）：**
+    *   为不同的**角色**（`main`、`research`、`fallback`）定义 AI 提供商和模型 ID。
+    *   按角色存储参数如 `maxTokens` 和 `temperature`。
+    *   通过 `task-master models --setup` CLI 命令管理。
+    *   [`config-manager.js`](mdc:scripts/modules/config-manager.js) 提供**获取器**（如 `getMainProvider()`、`getParametersForRole()`）来访问这些设置。核心逻辑应**仅**将这些获取器用于*非 AI 相关的应用逻辑*（如 `getDefaultSubtasks`）。统一服务根据 `role` 在内部获取必要的 AI 参数。
+    *   **API 密钥**不存储在此处；它们通过 [`utils.js`](mdc:scripts/modules/utils.js) 中的 `resolveEnvVariable` 从 `.env`（用于 CLI）或 MCP `session.env` 对象（用于 MCP 调用）解析。参见 [`utilities.mdc`](mdc:.cursor/rules/utilities.mdc) 和 [`dev_workflow.mdc`](mdc:.cursor/rules/dev_workflow.mdc)。
+
+*   **统一服务（`ai-services-unified.js`）：**
+    *   导出主要交互函数：`generateTextService`、`generateObjectService`。（注意：`streamTextService` 存在但某些提供商/负载存在已知的可靠性问题）。
+    *   包含核心 `_unifiedServiceRunner` 逻辑。
+    *   内部使用 `config-manager.js` 获取器根据请求的 `role` 确定提供商/模型/参数。
+    *   实现**故障转移序列**（如 main -> fallback -> research），当主要提供商/模型失败时。
+    *   构建 Vercel AI SDK 所需的 `messages` 数组。
+    *   为特定 API 错误实现**重试逻辑**（`_attemptProviderCallWithRetries`）。
+    *   通过 `_resolveApiKey`（使用 `resolveEnvVariable`）自动解析 API 密钥。
+    *   通过 `PROVIDER_FUNCTIONS` 将请求映射到正确的提供商实现（在 `src/ai-providers/` 中）。
+
+*   **提供商实现（`src/ai-providers/*.js`）：**
+    *   包含围绕 Vercel AI SDK 函数（`generateText`、`generateObject`）的提供商特定包装器。
+
+**使用模式（来自核心逻辑如 `task-manager/*.js`）：**
+
+1.  **导入服务：** 从 `../ai-services-unified.js` 导入 `generateTextService` 或 `generateObjectService`。
+    ```javascript
+    // 推荐用于大多数任务（尤其是复杂 JSON）
+    import { generateTextService } from '../ai-services-unified.js';
+
+    // 仅在特定用例输出结构可靠时使用
+    // import { generateObjectService } from '../ai-services-unified.js';
+    ```
+
+2.  **准备参数：** 构建服务调用的参数对象。
+    *   `role`：**必需。** `'main'`、`'research'` 或 `'fallback'`。决定统一服务使用的初始提供商/模型/参数。
+    *   `session`：**如果从 MCP 上下文调用则必需。** 传递直接函数包装器接收的 `session` 对象。统一服务使用 `session.env` 查找 API 密钥。
+    *   `systemPrompt`：您的系统指令字符串。
+    *   `prompt`：用户消息字符串（可以很长，包含字符串化数据等）。
+    *   （仅适用于 `generateObjectService`）：`schema`（Zod schema）、`objectName`。
+
+3.  **调用服务：** 使用 `await` 调用服务函数。
+    ```javascript
+    // 使用 generateTextService 的示例（最常见）
+    try {
+        const resultText = await generateTextService({
+            role: useResearch ? 'research' : 'main', // 基于逻辑确定角色
+            session: context.session, // 从上下文对象传递会话
+            systemPrompt: "You are...",
+            prompt: userMessageContent
+        });
+        // 处理原始文本响应（如解析 JSON，直接使用）
+        // ...
+    } catch (error) {
+        // 处理统一服务抛出的错误（如果所有故障转移/重试都失败）
+        report('error', `统一 AI 服务调用失败：${error.message}`);
+        throw error;
+    }
+
+    // 使用 generateObjectService 的示例（谨慎使用）
+    try {
+        const resultObject = await generateObjectService({
+            role: 'main',
+            session: context.session,
+            schema: myZodSchema,
+            objectName: 'myDataObject',
+            systemPrompt: "You are...",
+            prompt: userMessageContent
+        });
+        // resultObject 已经是经过验证的 JS 对象
+        // ...
+    } catch (error) {
+        report('error', `统一 AI 服务调用失败：${error.message}`);
+        throw error;
+    }
+    ```
+
+4.  **处理结果/错误：** 处理返回的文本/对象或处理统一服务层抛出的错误。
+
+**关键实现规则和注意事项：**
+
+*   ✅ **应该**：通过 `generateTextService` 或 `generateObjectService` 集中化**所有** LLM 调用。
+*   ✅ **应该**：在核心逻辑中确定适当的 `role`（`main`、`research`、`fallback`）并传递给服务。
+*   ✅ **应该**：在 MCP 上下文中调用服务时传递 `session` 对象（在 `context` 参数中接收，尤其是来自直接函数包装器）。
+*   ✅ **应该**：确保在 `.env`（用于 CLI）或 `.cursor/mcp.json`（用于 MCP）中正确配置 API 密钥。
+*   ✅ **应该**：确保 `.taskmasterconfig` 存在并为您打算使用的角色具有有效的提供商/模型 ID（通过 `task-master models --setup` 管理）。
+*   ✅ **应该**：当需要结构化输出时，使用 `generateTextService` 并实现健壮的手动 JSON 解析（解析后使用 Zod 验证），因为 `generateObjectService` 在某些提供商/模式中显示出不可靠性。
+*   ❌ **不应该**：从旧的 `ai-services.js`、`ai-client-factory.js` 或 `ai-client-utils.js` 文件导入或调用任何内容。
+*   ❌ **不应该**：在核心逻辑（`task-manager/`）或 MCP 直接函数中直接初始化 AI 客户端（Anthropic、Perplexity 等）。
+*   ❌ **不应该**：使用 `config-manager.js` 获取器获取 AI 特定参数（模型 ID、最大令牌数、温度）*用于 AI 调用*。应该传递 `role`。
+*   ❌ **不应该**：在 `ai-services-unified.js` 外实现故障转移或重试逻辑。
+*   ❌ **不应该**：在服务层外处理 API 密钥解析（它在内部使用 `utils.js`）。
+*   ⚠️ **generateObjectService 注意事项**：注意 `generateObjectService` 在不同提供商和复杂模式中可能存在可靠性问题。对于结构化数据需求，优先使用 `generateTextService` + 手动解析作为更稳健的替代方案。

@@ -1,0 +1,608 @@
+# 命令行界面实现指南
+
+**交互方式说明:**
+
+虽然本文档详细说明了 Task Master 的 **CLI 命令**实现,但在集成环境(如 Cursor)中与 Task Master 交互的**首选方法是通过 MCP 服务器工具**。
+
+- **优先使用 MCP 工具**: 在以编程方式或通过集成工具进行交互时,始终优先使用 MCP 工具(如 `get_tasks`、`add_task`)。它们提供更好的性能、结构化数据和更丰富的错误处理。请参阅 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc) 获取 MCP 工具及其对应 CLI 命令的完整列表。
+- **CLI 作为备选/用户界面**: 此处描述的 `task-master` CLI 命令主要用于:
+    - 在终端中直接用户交互。
+    - 当 MCP 服务器不可用或特定功能未通过 MCP 工具公开时的备选机制。
+- **实现上下文**: 本文档(`commands.mdc`)重点介绍在 [`commands.js`](mdc:scripts/modules/commands.js) 模块中使用 Commander.js 实现 CLI 命令的标准。
+
+## 命令结构标准
+
+- **基本命令模板**:
+  ```javascript
+  // ✅ 应该: 遵循所有命令的这种结构
+  programInstance
+    .command('command-name')
+    .description('清晰简洁地描述命令的功能')
+    .option('-o, --option <value>', '选项描述', '默认值')
+    .option('--long-option <value>', '选项描述')
+    .action(async (options) => {
+      // 命令实现
+    });
+  ```
+
+- **命令处理器组织**:
+  - ✅ 应该: 保持 action 处理器简洁明确
+  - ✅ 应该: 将核心功能提取到适当的模块中
+  - ✅ 应该: 让 action 处理器导入并调用核心模块中的相关函数,如 `task-manager.js` 或 `init.js`,传递解析后的 `options`
+  - ✅ 应该: 在 action 处理器或被调用的核心函数开始时执行基本参数验证,如检查必需选项
+  - ❌ 不应该: 在命令处理器中实现业务逻辑
+
+## 删除命令的最佳实践
+
+在实现删除或移除数据的命令(如 `remove-task` 或 `remove-subtask`)时,请遵循以下具体指南:
+
+- **确认提示**:
+  - ✅ **应该**: 默认为破坏性操作包含确认提示
+  - ✅ **应该**: 提供 `--yes` 或 `-y` 标志以跳过确认,适用于脚本或自动化
+  - ✅ **应该**: 在确认消息中显示将要删除的内容
+  - ❌ **不应该**: 在未明确覆盖的情况下执行破坏性操作
+
+  ```javascript
+  // ✅ 应该: 为破坏性操作包含确认
+  programInstance
+    .command('remove-task')
+    .description('永久删除任务或子任务')
+    .option('-i, --id <id>', '要删除的任务 ID')
+    .option('-y, --yes', '跳过确认提示', false)
+    .action(async (options) => {
+      // 验证代码...
+      
+      if (!options.yes) {
+        const confirm = await inquirer.prompt([{
+          type: 'confirm',
+          name: 'proceed',
+          message: `您确定要永久删除任务 ${taskId} 吗?此操作无法撤消。`,
+          default: false
+        }]);
+        
+        if (!confirm.proceed) {
+          console.log(chalk.yellow('操作已取消。'));
+          return;
+        }
+      }
+      
+      // 继续删除...
+    });
+  ```
+
+- **文件路径处理**:
+  - ✅ **应该**: 使用 `path.join()` 构造文件路径
+  - ✅ **应该**: 遵循任务的既定命名约定,如 `task_001.txt`
+  - ✅ **应该**: 在尝试删除文件之前检查文件是否存在
+  - ✅ **应该**: 优雅地处理文件删除错误
+  - ❌ **不应该**: 使用字符串连接构造路径
+
+  ```javascript
+  // ✅ 应该: 正确构造文件路径
+  const taskFilePath = path.join(
+    path.dirname(tasksPath),
+    `task_${taskId.toString().padStart(3, '0')}.txt`
+  );
+  
+  // ✅ 应该: 删除前检查是否存在
+  if (fs.existsSync(taskFilePath)) {
+    try {
+      fs.unlinkSync(taskFilePath);
+      console.log(chalk.green(`任务文件已删除: ${taskFilePath}`));
+    } catch (error) {
+      console.warn(chalk.yellow(`无法删除任务文件: ${error.message}`));
+    }
+  }
+  ```
+
+- **清理引用**:
+  - ✅ **应该**: 清理数据其他部分中对已删除项的引用
+  - ✅ **应该**: 处理直接和间接引用
+  - ✅ **应该**: 说明正在更新哪些相关数据
+  - ❌ **不应该**: 留下悬空引用
+
+  ```javascript
+  // ✅ 应该: 删除项目时清理引用
+  console.log(chalk.blue('正在清理任务依赖关系...'));
+  let referencesRemoved = 0;
+  
+  // 更新其他任务中的依赖关系
+  data.tasks.forEach(task => {
+    if (task.dependencies && task.dependencies.includes(taskId)) {
+      task.dependencies = task.dependencies.filter(depId => depId !== taskId);
+      referencesRemoved++;
+    }
+  });
+  
+  if (referencesRemoved > 0) {
+    console.log(chalk.green(`已从其他任务中删除 ${referencesRemoved} 个对任务 ${taskId} 的引用`));
+  }
+  ```
+
+- **任务文件重新生成**:
+  - ✅ **应该**: 在破坏性操作后重新生成任务文件
+  - ✅ **应该**: 向生成函数传递所有必需参数
+  - ✅ **应该**: 提供跳过重新生成的选项(如果需要)
+  - ❌ **不应该**: 假设默认参数可用
+
+  ```javascript
+  // ✅ 应该: 删除后正确重新生成文件
+  if (!options.skipGenerate) {
+    console.log(chalk.blue('正在重新生成任务文件...'));
+    try {
+      // 注意两个参数都明确提供
+      await generateTaskFiles(tasksPath, path.dirname(tasksPath));
+      console.log(chalk.green('任务文件重新生成成功'));
+    } catch (error) {
+      console.warn(chalk.yellow(`警告: 无法重新生成任务文件: ${error.message}`));
+    }
+  }
+  ```
+
+- **替代建议**:
+  - ✅ **应该**: 在适当时建议非破坏性替代方案
+  - ✅ **应该**: 解释删除和状态更改之间的区别
+  - ✅ **应该**: 包含替代命令示例
+
+  ```javascript
+  // ✅ 应该: 为破坏性操作建议替代方案
+  console.log(chalk.yellow('注意: 如果您只想将此任务从活动工作中排除,请考虑:'));
+  console.log(chalk.cyan(`  task-master set-status --id='${taskId}' --status='cancelled'`));
+  console.log(chalk.cyan(`  task-master set-status --id='${taskId}' --status='deferred'`));
+  console.log('这将保留任务及其历史记录以供参考。');
+  ```
+
+## 选项命名约定
+
+- **命令名称**:
+  - ✅ 应该: 使用 kebab-case 命名命令(`analyze-complexity`)
+  - ❌ 不应该: 使用 camelCase 命名命令(`analyzeComplexity`)
+  - ✅ 应该: 使用描述性的、面向动作的名称
+
+- **选项名称**:
+  - ✅ 应该: 使用 kebab-case 命名长格式选项,如 `--output-format`
+  - ✅ 应该: 在适当时提供单字母快捷方式,如 `-f, --file`
+  - ✅ 应该: 在类似命令中使用一致的选项名称
+  - ❌ 不应该: 对同一概念使用不同的名称,如一个命令中使用 `--file`,另一个命令中使用 `--path`
+
+  ```javascript
+  // ✅ 应该: 使用一致的选项命名
+  .option('-f, --file <path>', '任务文件的路径', 'tasks/tasks.json')
+  .option('-o, --output <dir>', '输出目录', 'tasks')
+  
+  // ❌ 不应该: 使用不一致的命名
+  .option('-f, --file <path>', '任务文件的路径')
+  .option('-p, --path <dir>', '输出目录') // 应该是 --output
+  ```
+
+  > **注意**: 虽然选项是用 kebab-case 定义的,如 `--num-tasks`,但 Commander.js 在内部将它们存储为 camelCase 属性。在代码中访问它们时使用 `options.numTasks`,而不是 `options['num-tasks']`。
+
+- **布尔标志约定**:
+  - ✅ 应该: 使用带 `--skip-` 前缀的正向标志来禁用行为
+  - ❌ 不应该: 使用带 `--no-` 前缀的否定布尔标志
+  - ✅ 应该: 在所有命令中使用一致的标志处理
+
+  ```javascript
+  // ✅ 应该: 使用带 skip- 前缀的正向标志
+  .option('--skip-generate', '跳过生成任务文件')
+  
+  // ❌ 不应该: 使用 --no- 前缀
+  .option('--no-generate', '跳过生成任务文件')
+  ```
+
+  > **重要**: 在代码中处理布尔标志时,明确表达您的意图:
+  ```javascript
+  // ✅ 应该: 使用与标志意图匹配的清晰变量命名
+  const generateFiles = !options.skipGenerate;
+  
+  // ❌ 不应该: 使用令人困惑的双重否定
+  const dontSkipGenerate = !options.skipGenerate;
+  ```
+
+## 输入验证
+
+- **必需参数**:
+  - ✅ 应该: 检查是否提供了必需参数
+  - ✅ 应该: 在缺少参数时提供清晰的错误消息
+  - ✅ 应该: 对验证失败使用带 `process.exit(1)` 的提前返回
+
+  ```javascript
+  // ✅ 应该: 提前验证必需参数
+  if (!prompt) {
+    console.error(chalk.red('错误: 需要 --prompt 参数。请提供任务描述。'));
+    process.exit(1);
+  }
+  ```
+
+- **参数类型转换**:
+  - ✅ 应该: 将字符串输入转换为适当的类型,如数字或布尔值
+  - ✅ 应该: 优雅地处理转换错误
+
+  ```javascript
+  // ✅ 应该: 正确解析数字参数
+  const fromId = parseInt(options.from, 10);
+  if (isNaN(fromId)) {
+    console.error(chalk.red('错误: --from 必须是有效数字'));
+    process.exit(1);
+  }
+  ```
+
+- **增强的输入验证**:
+  - ✅ 应该: 对关键文件操作验证文件是否存在
+  - ✅ 应该: 为标识符提供上下文特定的验证
+  - ✅ 应该: 检查依赖功能所需的 API 密钥
+
+  ```javascript
+  // ✅ 应该: 验证文件是否存在
+  if (!fs.existsSync(tasksPath)) {
+    console.error(chalk.red(`错误: 在路径 ${tasksPath} 未找到任务文件`));
+    if (tasksPath === 'tasks/tasks.json') {
+      console.log(chalk.yellow('提示: 先运行 task-master init 或 task-master parse-prd 创建 tasks.json'));
+    } else {
+      console.log(chalk.yellow(`提示: 检查文件路径是否正确: ${tasksPath}`));
+    }
+    process.exit(1);
+  }
+  
+  // ✅ 应该: 验证任务 ID
+  const taskId = parseInt(options.id, 10);
+  if (isNaN(taskId) || taskId <= 0) {
+    console.error(chalk.red(`错误: 无效的任务 ID: ${options.id}。任务 ID 必须是正整数。`));
+    console.log(chalk.yellow("用法示例: task-master update-task --id='23' --prompt='使用新信息更新。\\n确保正确的错误处理。'"));
+    process.exit(1);
+  }
+  
+  // ✅ 应该: 检查所需的 API 密钥
+  if (useResearch && !process.env.PERPLEXITY_API_KEY) {
+    console.log(chalk.yellow('警告: 缺少 PERPLEXITY_API_KEY 环境变量。研究支持的更新将不可用。'));
+    console.log(chalk.yellow('回退到使用 Claude AI 进行任务更新。'));
+  }
+  ```
+
+## 用户反馈
+
+- **操作状态**:
+  - ✅ 应该: 提供关于正在执行的操作的清晰反馈
+  - ✅ 应该: 完成后显示成功或错误消息
+  - ✅ 应该: 使用彩色输出区分不同类型的消息
+
+  ```javascript
+  // ✅ 应该: 显示操作状态
+  console.log(chalk.blue(`正在解析 PRD 文件: ${file}`));
+  console.log(chalk.blue(`正在生成 ${numTasks} 个任务...`));
+  
+  try {
+    await parsePRD(file, outputPath, numTasks);
+    console.log(chalk.green('成功从 PRD 生成任务'));
+  } catch (error) {
+    console.error(chalk.red(`错误: ${error.message}`));
+    process.exit(1);
+  }
+  ```
+
+- **带有后续步骤的成功消息**:
+  - ✅ 应该: 使用 boxen 显示格式清晰的重要成功消息
+  - ✅ 应该: 在命令完成后提供建议的后续步骤
+  - ✅ 应该: 包含可直接使用的后续操作命令
+
+  ```javascript
+  // ✅ 应该: 显示成功和后续步骤
+  console.log(boxen(
+    chalk.white.bold(`子任务 ${parentId}.${subtask.id} 添加成功`) + '\n\n' +
+    chalk.white(`标题: ${subtask.title}`) + '\n' +
+    chalk.white(`状态: ${getStatusWithColor(subtask.status)}`) + '\n' +
+    (dependencies.length > 0 ? chalk.white(`依赖项: ${dependencies.join(', ')}`) + '\n' : '') +
+    '\n' +
+    chalk.white.bold('后续步骤:') + '\n' +
+    chalk.cyan(`1. 运行 ${chalk.yellow(`task-master show '${parentId}'`)} 查看带有所有子任务的父任务`) + '\n' +
+    chalk.cyan(`2. 运行 ${chalk.yellow(`task-master set-status --id='${parentId}.${subtask.id}' --status='in-progress'`)} 开始处理它`),
+    { padding: 1, borderColor: 'green', borderStyle: 'round', margin: { top: 1 } }
+  ));
+  ```
+
+## 命令注册
+
+- **命令分组**:
+  - ✅ 应该: 在代码中将相关命令分组
+  - ✅ 应该: 按逻辑顺序添加相关命令
+  - ✅ 应该: 使用注释划分命令组
+
+- **命令导出**:
+  - ✅ 应该: 导出 registerCommands 函数
+  - ✅ 应该: 保持 CLI 设置代码整洁可维护
+
+  ```javascript
+  // ✅ 应该: 遵循此导出模式
+  export {
+    registerCommands,
+    setupCLI,
+    runCLI,
+    checkForUpdate, // 包含版本检查函数
+    compareVersions,
+    displayUpgradeNotification
+  };
+  ```
+
+## 错误处理
+
+- **异常管理**:
+  - ✅ 应该: 将异步操作包装在 try/catch 块中
+  - ✅ 应该: 显示用户友好的错误消息
+  - ✅ 应该: 在调试模式下包含详细的错误信息
+
+  ```javascript
+  // ✅ 应该: 正确处理错误
+  try {
+    // 命令实现
+  } catch (error) {
+    console.error(chalk.red(`错误: ${error.message}`));
+    
+    if (CONFIG.debug) {
+      console.error(error);
+    }
+    
+    process.exit(1);
+  }
+  ```
+
+- **未知选项处理**:
+  - ✅ 应该: 为未知选项提供清晰的错误消息
+  - ✅ 应该: 在使用未知选项时显示可用选项
+  - ✅ 应该: 为常见错误包含命令特定的帮助显示
+  - ❌ 不应该: 使用 `.allowUnknownOption()` 允许未知选项
+
+  ```javascript
+  // ✅ 应该: 为未知选项注册全局错误处理程序
+  programInstance.on('option:unknown', function(unknownOption) {
+    const commandName = this._name || 'unknown';
+    console.error(chalk.red(`错误: 未知选项 '${unknownOption}'`));
+    console.error(chalk.yellow(`运行 'task-master ${commandName} --help' 查看可用选项`));
+    process.exit(1);
+  });
+  
+  // ✅ 应该: 添加命令特定的帮助显示
+  function showCommandHelp() {
+    console.log(boxen(
+      chalk.white.bold('命令帮助') + '\n\n' +
+      chalk.cyan('用法:') + '\n' +
+      `  task-master command --option1=<value> [options]\n\n` +
+      chalk.cyan('选项:') + '\n' +
+      '  --option1 <value>    选项1的描述(必需)\n' +
+      '  --option2 <value>    选项2的描述\n\n' +
+      chalk.cyan('示例:') + '\n' +
+      '  task-master command --option1=\'value1\' --option2=\'value2\'',
+      { padding: 1, borderColor: 'blue', borderStyle: 'round' }
+    ));
+  }
+  ```
+
+- **全局错误处理**:
+  - ✅ 应该: 为未捕获的异常设置全局错误处理程序
+  - ✅ 应该: 检测和格式化 Commander 特定的错误
+  - ✅ 应该: 为修复常见错误提供合适的指导
+
+  ```javascript
+  // ✅ 应该: 设置带有帮助消息的全局错误处理程序
+  process.on('uncaughtException', (err) => {
+    // 处理 Commander 特定的错误
+    if (err.code === 'commander.unknownOption') {
+      const option = err.message.match(/'([^']+)'/)?.[1]; // 安全提取选项名称
+      console.error(chalk.red(`错误: 未知选项 '${option}'`));
+      console.error(chalk.yellow("运行 'task-master <command> --help' 查看可用选项"));
+      process.exit(1);
+    }
+    
+    // 处理其他错误类型...
+    console.error(chalk.red(`错误: ${err.message}`));
+    process.exit(1);
+  });
+  ```
+
+- **上下文错误处理**:
+  - ✅ 应该: 为常见问题提供特定的错误处理
+  - ✅ 应该: 为每种错误类型包含故障排除提示
+  - ✅ 应该: 在所有命令中使用一致的错误格式
+
+  ```javascript
+  // ✅ 应该: 提供带有指导的特定错误处理
+  try {
+    // 实现
+  } catch (error) {
+    console.error(chalk.red(`错误: ${error.message}`));
+    
+    // 为常见问题提供更有帮助的错误消息
+    if (error.message.includes('task') && error.message.includes('not found')) {
+      console.log(chalk.yellow('\n要修复此问题:'));
+      console.log('  1. 运行 \'task-master list\' 查看所有可用的任务 ID');
+      console.log('  2. 使用有效的任务 ID 和 --id 参数');
+    } else if (error.message.includes('API key')) {
+      console.log(chalk.yellow('\n此错误与 API 密钥有关。请检查您的环境变量。'));
+    }
+    
+    if (CONFIG.debug) {
+      console.error(error);
+    }
+    
+    process.exit(1);
+  }
+  ```
+
+## 与其他模块的集成
+
+- **导入组织**:
+  - ✅ 应该: 按模块/功能对导入进行分组
+  - ✅ 应该: 只导入需要的内容,而不是整个模块
+  - ❌ 不应该: 创建循环依赖
+
+  ```javascript
+  // ✅ 应该: 按模块组织导入
+  import { program } from 'commander';
+  import path from 'path';
+  import chalk from 'chalk';
+  import https from 'https';
+  
+  import { CONFIG, log, readJSON } from './utils.js';
+  import { displayBanner, displayHelp } from './ui.js';
+  import { parsePRD, listTasks } from './task-manager.js';
+  import { addDependency } from './dependency-manager.js';
+  ```
+
+## 子任务管理命令
+
+- **添加子任务命令结构**:
+  ```javascript
+  // ✅ 应该: 遵循此结构添加子任务
+  programInstance
+    .command('add-subtask')
+    .description('向父任务添加新子任务或将现有任务转换为子任务')
+    .option('-f, --file <path>', '任务文件的路径', 'tasks/tasks.json')
+    .option('-p, --parent <id>', '父任务的 ID(必需)')
+    .option('-i, --task-id <id>', '要转换为子任务的现有任务 ID')
+    .option('-t, --title <title>', '新子任务的标题,如果不是转换则必需')
+    .option('-d, --description <description>', '新子任务的描述,可选')
+    .option('--details <details>', '新子任务的实现细节,可选')
+    .option('--dependencies <ids>', '此子任务依赖的子任务 ID 列表,用逗号分隔')
+    .option('--status <status>', '子任务的初始状态', 'pending')
+    .option('--skip-generate', '跳过重新生成任务文件')
+    .action(async (options) => {
+      // 验证必需参数
+      if (!options.parent) {
+        console.error(chalk.red('错误: 需要 --parent 参数'));
+        showAddSubtaskHelp(); // 显示上下文帮助
+        process.exit(1);
+      }
+      
+      // 带有详细错误处理的实现
+    });
+  ```
+
+- **删除子任务命令结构**:
+  ```javascript
+  // ✅ 应该: 遵循此结构删除子任务
+  programInstance
+    .command('remove-subtask')
+    .description('从其父任务中删除子任务,可选择将其转换为独立任务')
+    .option('-f, --file <path>', '任务文件的路径', 'tasks/tasks.json')
+    .option('-i, --id <id>', '要删除的子任务的 ID,格式为 parentId.subtaskId,必需')
+    .option('-c, --convert', '将子任务转换为独立任务而不是删除')
+    .option('--skip-generate', '跳过重新生成任务文件')
+    .action(async (options) => {
+      // 带有详细错误处理的实现
+    })
+    .on('error', function(err) {
+      console.error(chalk.red(`错误: ${err.message}`));
+      showRemoveSubtaskHelp(); // 显示上下文帮助
+      process.exit(1);
+    });
+  ```
+
+## 版本检查和更新
+
+- **自动版本检查**:
+  - ✅ 应该: 实现版本检查以通知用户可用更新
+  - ✅ 应该: 使用不阻塞命令执行的非阻塞版本检查
+  - ✅ 应该: 在命令完成后显示更新通知
+
+  ```javascript
+  // ✅ 应该: 实现版本检查函数
+  async function checkForUpdate() {
+    // 实现细节...
+    // 示例返回结构:
+    return { currentVersion, latestVersion, updateAvailable };
+  }
+  
+  // ✅ 应该: 实现语义版本比较
+  function compareVersions(v1, v2) {
+    const v1Parts = v1.split('.').map(p => parseInt(p, 10));
+    const v2Parts = v2.split('.').map(p => parseInt(p, 10));
+    
+    // 实现细节...
+    return result; // -1, 0, 或 1
+  }
+  
+  // ✅ 应该: 显示吸引人的更新通知
+  function displayUpgradeNotification(currentVersion, latestVersion) {
+    const message = boxen(
+      `${chalk.blue.bold('有可用更新!')} ${chalk.dim(currentVersion)} → ${chalk.green(latestVersion)}\n\n` +
+      `运行 ${chalk.cyan('npm i task-master-ai@latest -g')} 更新到具有新功能和错误修复的最新版本。`,
+      {
+        padding: 1,
+        margin: { top: 1, bottom: 1 },
+        borderColor: 'yellow',
+        borderStyle: 'round'
+      }
+    );
+    
+    console.log(message);
+  }
+  
+  // ✅ 应该: 在 CLI 运行函数中集成版本检查
+  async function runCLI(argv = process.argv) {
+    try {
+      // 在后台启动更新检查 - 暂时不等待
+      const updateCheckPromise = checkForUpdate();
+      
+      // 设置和解析
+      // Setup and parse
+      const programInstance = setupCLI();
+      await programInstance.parseAsync(argv);
+      
+      // After command execution, check if an update is available
+      const updateInfo = await updateCheckPromise;
+      if (updateInfo.updateAvailable) {
+        displayUpgradeNotification(updateInfo.currentVersion, updateInfo.latestVersion);
+      }
+    } catch (error) {
+      // Error handling...
+    }
+  }
+  ```
+
+Refer to [`commands.js`](mdc:scripts/modules/commands.js) for implementation examples and [`new_features.mdc`](mdc:.cursor/rules/new_features.mdc) for integration guidelines. 
+// Helper function to show add-subtask command help
+function showAddSubtaskHelp() {
+  console.log(boxen(
+    chalk.white.bold('添加子任务命令帮助') + '\n\n' +
+    chalk.cyan('用法:') + '\n' +
+    `  task-master add-subtask --parent=<id> [options]\n\n` +
+    chalk.cyan('选项:') + '\n' +
+    '  -p, --parent <id>         父任务 ID (必需)\n' +
+    '  -i, --task-id <id>        要转换为子任务的现有任务 ID\n' +
+    '  -t, --title <title>       新子任务的标题\n' +
+    '  -d, --description <text>  新子任务的描述\n' +
+    '  --details <text>          新子任务的实现细节\n' +
+    '  --dependencies <ids>      此子任务依赖的子任务 ID 列表,用逗号分隔\n' +
+    '  -s, --status <status>     子任务的初始状态 (默认: "pending")\n' +
+    '  -f, --file <file>         任务文件的路径 (默认: "tasks/tasks.json")\n' +
+    '  --skip-generate           跳过重新生成任务文件\n\n' +
+    chalk.cyan('示例:') + '\n' +
+    '  task-master add-subtask --parent=\'5\' --task-id=\'8\'\n' +
+    '  task-master add-subtask -p \'5\' -t \'实现登录界面\' -d \'创建登录表单\'\n' +
+    '  task-master add-subtask -p \'5\' -t \'处理 API 错误\' --details $\'处理 401 未授权错误。\n处理 500 服务器错误。\'',
+    { padding: 1, borderColor: 'blue', borderStyle: 'round' }
+  ));
+}
+
+// Helper function to show remove-subtask command help
+function showRemoveSubtaskHelp() {
+  console.log(boxen(
+    chalk.white.bold('删除子任务命令帮助') + '\n\n' +
+    chalk.cyan('用法:') + '\n' +
+    `  task-master remove-subtask --id=<parentId.subtaskId> [options]\n\n` +
+    chalk.cyan('选项:') + '\n' +
+    '  -i, --id <id>       要删除的子任务 ID,格式为 "parentId.subtaskId" (可以是逗号分隔的多个 ID,必需)\n' +
+    '  -c, --convert       将子任务转换为独立任务而不是删除\n' +
+    '  -f, --file <file>   任务文件的路径 (默认: "tasks/tasks.json")\n' +
+    '  --skip-generate     跳过重新生成任务文件\n\n' +
+    chalk.cyan('示例:') + '\n' +
+    '  task-master remove-subtask --id=\'5.2\'\n' +
+    '  task-master remove-subtask --id=\'5.2,6.3,7.1\'\n' +
+    '  task-master remove-subtask --id=\'5.2\' --convert',
+    { padding: 1, borderColor: 'blue', borderStyle: 'round' }
+  ));
+} 
+
+    '  task-master remove-subtask --id=\'5.2\' --convert',
+    { padding: 1, borderColor: 'blue', borderStyle: 'round' }
+  ));
+} 

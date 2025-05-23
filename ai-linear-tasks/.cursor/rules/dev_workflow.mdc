@@ -1,0 +1,216 @@
+---
+description: 使用 Task Master 管理任务驱动开发工作流的指南
+globs: **/*
+alwaysApply: true
+---
+# Task Master 开发工作流
+
+本指南概述了使用 Task Master 管理软件开发项目的典型流程。
+
+## 主要交互方式: MCP 服务器 vs. CLI
+
+Task Master 提供两种主要的交互方式:
+
+1. **MCP 服务器(推荐用于集成工具)**:
+   - 对于 AI 代理和集成开发环境(如 Cursor),通过 **MCP 服务器交互是首选方法**。
+   - MCP 服务器通过一组工具(如 `get_tasks`, `add_subtask`)暴露 Task Master 功能。
+   - 与 CLI 解析相比,此方法提供更好的性能、结构化数据交换和更丰富的错误处理。
+   - 参考 [`mcp.mdc`](mdc:.cursor/rules/mcp.mdc) 了解 MCP 架构和可用工具的详细信息。
+   - 在 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc) 中可以找到 MCP 工具及其对应 CLI 命令的完整列表和说明。
+   - 如果 `scripts/modules` 中的核心逻辑或 MCP 工具/直接函数定义发生变化,需要**重启 MCP 服务器**。
+
+2. **`task-master` CLI(面向用户和备用)**:
+   - 全局 `task-master` 命令为直接终端交互提供用户友好的界面。
+   - 当 MCP 服务器不可访问或特定功能未通过 MCP 暴露时,也可作为备用方案。
+   - 通过 `npm install -g task-master-ai` 全局安装或通过 `npx task-master-ai ...` 本地使用。
+   - CLI 命令通常与 MCP 工具对应(如 `task-master list` 对应 `get_tasks`)。
+   - 参考 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc) 获取详细的命令参考。
+
+## 标准开发工作流程
+
+- 通过运行 `initialize_project` 工具 / `task-master init` 或 `parse_prd` / `task-master parse-prd --input='<prd-file.txt>'` (参见 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc))启动新项目,生成初始 tasks.json
+- 使用 `get_tasks` / `task-master list` (参见 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc))开始编码会话,查看当前任务、状态和 ID
+- 使用 `next_task` / `task-master next` (参见 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc))确定下一个要处理的任务
+- 在分解任务之前使用 `analyze_project_complexity` / `task-master analyze-complexity --research` (参见 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc))分析任务复杂度
+- 使用 `complexity_report` / `task-master complexity-report` (参见 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc))查看复杂度报告
+- 根据依赖关系(全部标记为'done')、优先级和 ID 顺序选择任务
+- 通过检查 tasks/ 目录中的任务文件或询问用户输入来明确任务
+- 使用 `get_task` / `task-master show <id>` (参见 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc))查看特定任务详情,了解实现要求
+- 使用 `expand_task` / `task-master expand --id=<id> --force --research` (参见 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc))分解复杂任务,使用适当的标志如 `--force`(替换现有子任务)和 `--research`
+- 如需要,在重新生成之前使用 `clear_subtasks` / `task-master clear-subtasks --id=<id>` (参见 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc))清除现有子任务
+- 按照任务详情、依赖关系和项目标准实现代码
+- 在标记为完成之前根据测试策略验证任务(参见 [`tests.mdc`](mdc:.cursor/rules/tests.mdc))
+- 使用 `set_task_status` / `task-master set-status --id=<id> --status=done` (参见 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc))标记已完成的任务
+- 当实现与原计划不同时,使用 `update` / `task-master update --from=<id> --prompt="..."` 或 `update_task` / `task-master update-task --id=<id> --prompt="..."` (参见 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc))更新相关任务
+- 使用 `add_task` / `task-master add-task --prompt="..." --research` (参见 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc))添加实现过程中发现的新任务
+- 根据需要使用 `add_subtask` / `task-master add-subtask --parent=<id> --title="..."` (参见 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc))添加新的子任务
+- 使用 `update_subtask` / `task-master update-subtask --id=<subtaskId> --prompt='Add implementation notes here...\nMore details...'` (参见 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc))为子任务添加注释或详细信息
+- 更新 tasks.json 后使用 `generate` / `task-master generate` (参见 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc))生成任务文件
+- 需要时使用 `add_dependency`/`remove_dependency` 工具或 `task-master add-dependency`/`remove-dependency` 命令、`validate_dependencies` / `task-master validate-dependencies` 和 `fix_dependencies` / `task-master fix-dependencies` (参见 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc))维护有效的依赖结构
+- 选择工作时遵循依赖链和任务优先级
+- 使用 `get_tasks` / `task-master list` 定期报告进度
+
+## 任务复杂度分析
+
+- 运行 `analyze_project_complexity` / `task-master analyze-complexity --research` (参见 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc))进行全面分析
+- 通过 `complexity_report` / `task-master complexity-report` (参见 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc))查看格式化的可读复杂度报告
+- 重点关注复杂度得分最高(8-10)的任务进行详细分解
+- 使用分析结果确定适当的子任务分配
+- 注意报告会被 `expand_task` 工具/命令自动使用
+
+## 任务分解流程
+
+- 使用 `expand_task` / `task-master expand --id=<id>`。如果找到复杂度报告会自动使用,否则生成默认数量的子任务
+- 使用 `--num=<number>` 指定明确的子任务数量,覆盖默认值或复杂度报告建议
+- 添加 `--research` 标志以利用 Perplexity AI 进行研究支持的扩展
+- 添加 `--force` 标志在生成新子任务前清除现有子任务(默认是追加)
+- 需要时使用 `--prompt="<context>"` 提供额外上下文
+- 根据需要审查和调整生成的子任务
+- 使用 `expand_all` 工具或 `task-master expand --all` 一次性展开多个待处理任务,遵循 `--force` 和 `--research` 等标志
+- 如果需要完全替换子任务(无论 `expand` 的 `--force` 标志如何),先使用 `clear_subtasks` / `task-master clear-subtasks --id=<id>` 清除它们
+
+## 实现偏差处理
+
+- 当实现与计划的方法有显著差异时
+- 当当前实现选择需要修改未来任务时
+- 当出现新的依赖或需求时
+- 使用 `update` / `task-master update --from=<futureTaskId> --prompt='<explanation>\nUpdate context...' --research` 更新多个未来任务
+- 使用 `update_task` / `task-master update-task --id=<taskId> --prompt='<explanation>\nUpdate context...' --research` 更新单个特定任务
+
+## 任务状态管理
+
+- 使用 'pending' 表示准备处理的任务
+- 使用 'done' 表示已完成和验证的任务
+- 使用 'deferred' 表示推迟的任务
+- 根据项目特定工作流需要添加自定义状态值
+
+## 任务结构字段
+
+- **id**: 任务的唯一标识符(示例: `1`, `1.1`)
+- **title**: 简短的描述性标题(示例: `"初始化仓库"`)
+- **description**: 任务内容的简明总结(示例: `"创建新仓库,设置初始结构。"`)
+- **status**: 任务的当前状态(示例: `"pending"`, `"done"`, `"deferred"`)
+- **dependencies**: 前置任务的 ID(示例: `[1, 2.1]`)
+    - 依赖项显示状态指示器(✅ 表示已完成, ⏱️ 表示待处理)
+    - 这有助于快速识别哪些前置任务正在阻塞工作
+- **priority**: 重要性级别(示例: `"high"`, `"medium"`, `"low"`)
+- **details**: 详细的实现说明(示例: `"使用 GitHub 客户端 ID/secret,处理回调,设置会话令牌。"`)
+- **testStrategy**: 验证方法(示例: `"部署并调用端点以确认'Hello World'响应。"`)
+- **subtasks**: 更小、更具体的任务列表(示例: `[{"id": 1, "title": "配置 OAuth", ...}]`)
+- 参考任务结构详情(之前链接到 `tasks.mdc`)
+
+## 配置管理(更新)
+
+Taskmaster 配置通过两种主要机制管理:
+
+1. **`.taskmasterconfig` 文件(主要)**:
+   * 位于项目根目录
+   * 存储大多数配置设置:AI 模型选择(主要、研究、备用)、参数(最大令牌数、温度)、日志级别、默认子任务/优先级、项目名称等
+   * **通过 `task-master models --setup` 命令管理。** 除非你知道自己在做什么,否则不要手动编辑
+   * **通过 `task-master models` 命令或 `models` MCP 工具查看/设置特定模型**
+   * 首次运行 `task-master models --setup` 时自动创建
+
+2. **环境变量(`.env` / `mcp.json`)**:
+   * **仅**用于敏感 API 密钥和特定端点 URL
+   * 将 API 密钥(每个提供商一个)放在项目根目录的 `.env` 文件中供 CLI 使用
+   * 对于 MCP/Cursor 集成,在 `.cursor/mcp.json` 的 `env` 部分配置这些密钥
+   * 可用的密钥/变量:参见 `assets/env.example` 或命令参考中的配置部分(之前链接到 `taskmaster.mdc`)
+
+**重要:** 非 API 密钥设置(如模型选择、`MAX_TOKENS`、`LOG_LEVEL`)**不再通过环境变量配置**。使用 `task-master models` 命令(或 `--setup` 进行交互式配置)或 `models` MCP 工具。
+**如果 MCP 中的 AI 命令失败**,验证所选提供商的 API 密钥是否存在于 `.cursor/mcp.json` 的 `env` 部分。
+**如果 CLI 中的 AI 命令失败**,验证所选提供商的 API 密钥是否存在于项目根目录的 `.env` 文件中。
+
+## 确定下一个任务
+
+- 运行 `next_task` / `task-master next` 显示下一个要处理的任务
+- 该命令识别所有依赖都已满足的任务
+- 任务按优先级、依赖数量和 ID 排序
+- 该命令显示全面的任务信息,包括:
+    - 基本任务详情和描述
+    - 实现详情
+    - 子任务(如果存在)
+    - 上下文建议操作
+- 建议在开始任何新的开发工作之前使用
+- 遵循项目的依赖结构
+- 确保按适当顺序完成任务
+- 提供常见任务操作的即用命令
+
+## 查看特定任务详情
+
+- 运行 `get_task` / `task-master show <id>` 查看特定任务
+- 使用点号表示子任务:`task-master show 1.2`(显示任务 1 的子任务 2)
+- 显示类似于 next 命令的全面信息,但针对特定任务
+- 对于父任务,显示所有子任务及其当前状态
+- 对于子任务,显示父任务信息和关系
+- 提供适合特定任务的上下文建议操作
+- 在实现之前检查任务详情或检查状态时很有用
+
+## 管理任务依赖
+
+- 使用 `add_dependency` / `task-master add-dependency --id=<id> --depends-on=<id>` 添加依赖
+- 使用 `remove_dependency` / `task-master remove-dependency --id=<id> --depends-on=<id>` 移除依赖
+- 系统防止循环依赖和重复依赖项
+- 在添加或移除依赖之前检查其是否存在
+- 依赖更改后自动重新生成任务文件
+- 在任务列表和文件中用状态指示器可视化依赖关系
+
+## 迭代子任务实现
+
+一旦使用 `expand_task` 或类似方法将任务分解为子任务,请按照以下迭代过程进行实现:
+
+1. **理解目标(准备)**:
+   * 使用 `get_task` / `task-master show <subtaskId>` (参见 [`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc))充分理解子任务的具体目标和要求
+
+2. **初始探索和规划(迭代 1)**:
+   * 这是创建具体实现计划的第一次尝试
+   * 探索代码库以识别需要修改的精确文件、函数甚至具体代码行
+   * 确定预期的代码更改(差异)及其位置
+   * 收集此探索阶段的*所有*相关细节
+
+3. **记录计划**:
+   * 运行 `update_subtask` / `task-master update-subtask --id=<subtaskId> --prompt='<detailed plan>'`
+   * 在提示中提供探索阶段的*完整详细*发现。包括文件路径、行号、建议的差异、推理和识别的任何潜在挑战。不要省略细节。目标是在子任务的 `details` 中创建丰富的带时间戳的日志
+
+4. **验证计划**:
+   * 再次运行 `get_task` / `task-master show <subtaskId>` 确认详细的实现计划已成功追加到子任务的详情中
+
+5. **开始实现**:
+   * 使用 `set_task_status` / `task-master set-status --id=<subtaskId> --status=in-progress` 设置子任务状态
+   * 根据记录的计划开始编码
+
+6. **完善和记录进度(迭代 2+)**:
+   * 随着实现的进展,你会遇到挑战、发现细微差别或确认成功的方法
+   * **在追加新信息之前**:简要回顾子任务中记录的*现有*详情(使用 `get_task` 或从上下文回忆),以确保更新添加新的见解并避免重复
+   * **定期**使用 `update_subtask` / `task-master update-subtask --id=<subtaskId> --prompt='<update details>\n- What worked...\n- What didn't work...'` 追加新发现
+   * **关键是要记录**:
+       * 什么有效(发现的"基本真理")
+       * 什么无效及原因(避免重复错误)
+       * 成功的具体代码片段或配置
+       * 做出的决定,特别是如果经过用户输入确认
+       * 与初始计划的任何偏差及原因
+   * 目标是不断丰富子任务的详情,创建实现过程的日志,帮助 AI(和人类开发者)学习、适应并避免重复错误
+
+7. **审查和更新规则(实现后)**:
+   * 一旦子任务的实现功能完成,审查所有代码更改和相关聊天历史
+   * 识别在实现过程中建立的任何新的或修改的代码模式、约定或最佳实践
+   * 按照内部指南创建新规则或更新现有规则(之前链接到 `cursor_rules.mdc` 和 `self_improve.mdc`)
+
+8. **标记任务完成**:
+   * 验证实现并更新任何必要的规则后,将子任务标记为完成:`set_task_status` / `task-master set-status --id=<subtaskId> --status=done`
+
+9. **提交更改(如果使用 Git)**:
+   * 暂存相关的代码更改和任何更新/新规则文件(`git add .`)
+   * 编写全面的 Git 提交消息,总结子任务完成的工作,包括代码实现和任何规则调整
+   * 直接在终端执行提交命令(例如,`git commit -m 'feat(module): 为子任务 <subtaskId> 实现功能 X\n\n- 更改详情...\n- 为模式 Z 更新规则 Y'`)
+   * 根据内部版本控制指南(之前链接到 `changeset.mdc`)考虑是否需要 Changeset。如果需要,运行 `npm run changeset`,暂存生成的文件,并修改提交或创建新提交
+
+10. **继续下一个子任务**:
+    * 识别下一个子任务(例如,使用 `next_task` / `task-master next`)
+
+## 代码分析和重构技术
+
+- **顶级函数搜索**:
+    - 对于理解模块结构或规划重构很有用
+    - 使用 grep/ripgrep 查找导出的函数/常量:
+      `rg "export (async function|function|const) \w+"` 或类似模式
+    - 可以帮助在迁移期间比较文件之间的函数或识别潜在的命名冲突

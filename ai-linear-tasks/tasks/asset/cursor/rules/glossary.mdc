@@ -1,0 +1,25 @@
+---
+description: 其他 Cursor 规则的词汇表
+globs: **/*
+alwaysApply: true
+---
+
+# Task Master Cursor 规则词汇表
+
+本文件为 `.cursor/rules` 目录中每个规则文件的用途提供快速参考。
+
+- **[`architecture.mdc`](mdc:.cursor/rules/architecture.mdc)**: 描述 Task Master CLI 应用程序的高级架构。
+- **[`changeset.mdc`](mdc:.cursor/rules/changeset.mdc)**: 使用 Changesets (npm run changeset) 管理版本和变更日志的指南。
+- **[`commands.mdc`](mdc:.cursor/rules/commands.mdc)**: 使用 Commander.js 实现 CLI 命令的指南。
+- **[`cursor_rules.mdc`](mdc:.cursor/rules/cursor_rules.mdc)**: 创建和维护 Cursor 规则以确保一致性和有效性的指南。
+- **[`dependencies.mdc`](mdc:.cursor/rules/dependencies.mdc)**: 管理任务依赖和关系的指南。
+- **[`dev_workflow.mdc`](mdc:.cursor/rules/dev_workflow.mdc)**: 使用 Task Master 管理任务驱动开发工作流的指南。
+- **[`glossary.mdc`](mdc:.cursor/rules/glossary.mdc)**: 本文件;提供其他 Cursor 规则的词汇表。
+- **[`mcp.mdc`](mdc:.cursor/rules/mcp.mdc)**: 实现和与 Task Master MCP 服务器交互的指南。
+- **[`new_features.mdc`](mdc:.cursor/rules/new_features.mdc)**: 将新功能集成到 Task Master CLI 的指南。
+- **[`self_improve.mdc`](mdc:.cursor/rules/self_improve.mdc)**: 基于新出现的代码模式和最佳实践持续改进 Cursor 规则的指南。
+- **[`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc)**: Taskmaster MCP 工具和 CLI 命令的综合参考。
+- **[`tasks.mdc`](mdc:.cursor/rules/tasks.mdc)**: 实现任务管理操作的指南。
+- **[`tests.mdc`](mdc:.cursor/rules/tests.mdc)**: 实现和维护 Task Master CLI 测试的指南。
+- **[`ui.mdc`](mdc:.cursor/rules/ui.mdc)**: 实现和维护用户界面组件的指南。
+- **[`utilities.mdc`](mdc:.cursor/rules/utilities.mdc)**: 实现实用函数的指南。

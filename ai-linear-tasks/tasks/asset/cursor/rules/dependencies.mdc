@@ -1,0 +1,224 @@
+---
+description: 任务依赖关系和关联管理指南
+globs: scripts/modules/dependency-manager.js
+alwaysApply: false
+---
+
+# 依赖管理指南
+
+## 依赖结构原则
+
+- **依赖引用**:
+  - ✅ 应该: 将任务依赖表示为任务 ID 数组
+  - ✅ 应该: 对直接任务引用使用数字 ID
+  - ✅ 应该: 对子任务引用使用带点号的字符串 ID(如 "1.2")
+  - ❌ 不应该: 在没有适当转换的情况下混用引用类型
+
+  ```javascript
+  // ✅ 应该: 使用一致的依赖格式
+  // 对于主任务
+  task.dependencies = [1, 2, 3]; // 依赖其他主任务
+  
+  // 对于子任务
+  subtask.dependencies = [1, "3.2"]; // 依赖主任务 1 和任务 3 的子任务 2
+  ```
+
+- **子任务依赖**:
+  - ✅ 应该: 允许数字子任务 ID 引用同一父任务内的其他子任务
+  - ✅ 应该: 在需要时适当转换格式
+  - ❌ 不应该: 在子任务之间创建循环依赖
+
+  ```javascript
+  // ✅ 应该: 正确规范化子任务依赖
+  // 当子任务引用同一父任务中的另一个子任务时
+  if (typeof depId === 'number' && depId < 100) {
+    // 这可能是对同一父任务中另一个子任务的引用
+    const fullSubtaskId = `${parentId}.${depId}`;
+    // 现在使用 fullSubtaskId 进行验证
+  }
+  ```
+
+## 依赖验证
+
+- **存在性检查**:
+  - ✅ 应该: 在添加依赖前验证引用的任务是否存在
+  - ✅ 应该: 对不存在的依赖提供清晰的错误消息
+  - ✅ 应该: 在验证过程中移除对不存在任务的引用
+
+  ```javascript
+  // ✅ 应该: 添加前检查依赖是否存在
+  if (!taskExists(data.tasks, formattedDependencyId)) {
+    log('error', `依赖目标 ${formattedDependencyId} 在 tasks.json 中不存在`);
+    process.exit(1);
+  }
+  ```
+
+- **循环依赖预防**:
+  - ✅ 应该: 在添加新关系前检查循环依赖
+  - ✅ 应该: 使用图遍历算法(DFS)检测循环
+  - ✅ 应该: 提供清晰的错误消息解释循环链
+
+  ```javascript
+  // ✅ 应该: 添加前检查循环依赖
+  const dependencyChain = [formattedTaskId];
+  if (isCircularDependency(data.tasks, formattedDependencyId, dependencyChain)) {
+    log('error', `无法将依赖 ${formattedDependencyId} 添加到任务 ${formattedTaskId}，因为这会创建循环依赖。`);
+    process.exit(1);
+  }
+  ```
+
+- **自我依赖预防**:
+  - ✅ 应该: 防止任务依赖自身
+  - ✅ 应该: 处理直接和间接的自我依赖
+
+  ```javascript
+  // ✅ 应该: 防止自我依赖
+  if (String(formattedTaskId) === String(formattedDependencyId)) {
+    log('error', `任务 ${formattedTaskId} 不能依赖自身。`);
+    process.exit(1);
+  }
+  ```
+
+## 依赖修改
+
+- **添加依赖**:
+  - ✅ 应该: 一致地格式化任务和依赖 ID
+  - ✅ 应该: 检查现有依赖以防止重复
+  - ✅ 应该: 对依赖进行排序以提高可读性
+
+  ```javascript
+  // ✅ 应该: 添加依赖时一致地格式化 ID
+  const formattedTaskId = typeof taskId === 'string' && taskId.includes('.') 
+    ? taskId : parseInt(taskId, 10);
+  
+  const formattedDependencyId = formatTaskId(dependencyId);
+  ```
+
+- **移除依赖**:
+  - ✅ 应该: 移除前检查依赖是否存在
+  - ✅ 应该: 一致地处理不同的 ID 格式
+  - ✅ 应该: 提供关于移除结果的反馈
+
+  ```javascript
+  // ✅ 应该: 正确处理依赖移除
+  const dependencyIndex = targetTask.dependencies.findIndex(dep => {
+    // 转换为字符串进行比较
+    let depStr = String(dep);
+    
+    // 处理相对子任务引用
+    if (typeof dep === 'number' && dep < 100 && isSubtask) {
+      const [parentId] = formattedTaskId.split('.');
+      depStr = `${parentId}.${dep}`;
+    }
+    
+    return depStr === normalizedDependencyId;
+  });
+  
+  if (dependencyIndex === -1) {
+    log('info', `任务 ${formattedTaskId} 不依赖于 ${formattedDependencyId}，未做更改。`);
+    return;
+  }
+  
+  // 移除依赖
+  targetTask.dependencies.splice(dependencyIndex, 1);
+  ```
+
+## 依赖清理
+
+- **重复移除**:
+  - ✅ 应该: 使用 Set 对象识别和移除重复项
+  - ✅ 应该: 处理数字和字符串 ID 格式
+
+  ```javascript
+  // ✅ 应该: 移除重复依赖
+  const uniqueDeps = new Set();
+  const uniqueDependencies = task.dependencies.filter(depId => {
+    // 转换为字符串进行比较以处理数字和字符串 ID
+    const depIdStr = String(depId);
+    if (uniqueDeps.has(depIdStr)) {
+      log('warn', `从任务 ${task.id} 中移除重复依赖: ${depId}`);
+      return false;
+    }
+    uniqueDeps.add(depIdStr);
+    return true;
+  });
+  ```
+
+- **无效引用清理**:
+  - ✅ 应该: 检查并移除对不存在任务的引用
+  - ✅ 应该: 检查并移除自我引用
+  - ✅ 应该: 跟踪并报告清理过程中的更改
+
+  ```javascript
+  // ✅ 应该: 过滤无效任务依赖
+  task.dependencies = task.dependencies.filter(depId => {
+    const numericId = typeof depId === 'string' ? parseInt(depId, 10) : depId;
+    if (!validTaskIds.has(numericId)) {
+      log('warn', `从任务 ${task.id} 中移除无效任务依赖: ${depId} (任务不存在)`);
+      return false;
+    }
+    return true;
+  });
+  ```
+
+## 依赖可视化
+
+- **状态指示器**:
+  - ✅ 应该: 使用视觉指示器显示依赖状态 (✅/⏱️)
+  - ✅ 应该: 一致地格式化依赖列表
+
+  ```javascript
+  // ✅ 应该: 使用状态指示器格式化依赖
+  function formatDependenciesWithStatus(dependencies, allTasks) {
+    if (!dependencies || dependencies.length === 0) {
+      return '无';
+    }
+    
+    return dependencies.map(depId => {
+      const depTask = findTaskById(allTasks, depId);
+      if (!depTask) return `${depId} (未找到)`;
+      
+      const isDone = depTask.status === 'done' || depTask.status === 'completed';
+      const statusIcon = isDone ? '✅' : '⏱️';
+      
+      return `${statusIcon} ${depId} (${depTask.status})`;
+    }).join(', ');
+  }
+  ```
+
+## 循环检测
+
+- **图遍历**:
+  - ✅ 应该: 使用深度优先搜索(DFS)进行循环检测
+  - ✅ 应该: 跟踪已访问节点和递归栈
+  - ✅ 应该: 支持任务和子任务依赖
+
+  ```javascript
+  // ✅ 应该: 使用适当的循环检测算法
+  function findCycles(subtaskId, dependencyMap, visited = new Set(), recursionStack = new Set()) {
+    // 将当前节点标记为已访问并加入递归栈
+    visited.add(subtaskId);
+    recursionStack.add(subtaskId);
+    
+    const cyclesToBreak = [];
+    const dependencies = dependencyMap.get(subtaskId) || [];
+    
+    for (const depId of dependencies) {
+      if (!visited.has(depId)) {
+        const cycles = findCycles(depId, dependencyMap, visited, recursionStack);
+        cyclesToBreak.push(...cycles);
+      } 
+      else if (recursionStack.has(depId)) {
+        // 发现循环，添加要打破的边
+        cyclesToBreak.push(depId);
+      }
+    }
+    
+    // 返回前从递归栈中移除节点
+    recursionStack.delete(subtaskId);
+    
+    return cyclesToBreak;
+  }
+  ```
+
+参考 [`dependency-manager.js`](mdc:scripts/modules/dependency-manager.js) 获取实现示例，参考 [`new_features.mdc`](mdc:.cursor/rules/new_features.mdc) 获取集成指南。

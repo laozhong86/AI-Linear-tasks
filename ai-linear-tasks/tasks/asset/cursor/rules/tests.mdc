@@ -1,0 +1,891 @@
+---
+description: Guidelines for implementing and maintaining tests for Task Master CLI
+globs: "**/*.test.js,tests/**/*"
+---
+以下是翻译后的 `tests.txt` 文件内容，使用 Markdown 格式输出：
+
+---
+
+# Task Master CLI 测试指南
+
+*注意：* 测试中不要使用异步操作。根据被测试函数的定义和使用方式正确地模拟测试。不要随意创建测试，而应基于底层代码的细节和执行情况。
+
+## 测试组织结构
+
+- **单元测试** (查看 [`architecture.mdc`](mdc:.cursor/rules/architecture.mdc) 了解模块划分)
+  - 位于 `tests/unit/`
+  - 单独测试各个函数和工具
+  - 模拟所有外部依赖
+  - 保持测试小、专注且快速
+  - 示例命名：`utils.test.js`, `task-manager.test.js`
+
+- **集成测试**
+  - 位于 `tests/integration/`
+  - 测试模块之间的交互
+  - 关注组件接口而非实现细节
+  - 使用更接近真实的但仍然受控的测试环境
+  - 示例命名：`task-workflow.test.js`, `command-integration.test.js`
+
+- **端到端测试**
+  - 位于 `tests/e2e/`
+  - 从用户角度测试完整的流程
+  - 关注 CLI 命令的使用方式
+  - 示例命名：`create-task.e2e.test.js`, `expand-task.e2e.test.js`
+
+- **测试用具**
+  - 位于 `tests/fixtures/`
+  - 提供可复用的测试数据
+  - 保持测试用具小且具有代表性
+  - 以具名导出方式导出测试用具以便复用
+
+## 测试文件组织
+
+```javascript
+// 1. 导入
+import { jest } from '@jest/globals';
+
+// 2. 模拟设置（必须在导入被测试模块之前）
+jest.mock('fs');
+jest.mock('@anthropic-ai/sdk');
+jest.mock('../../scripts/modules/utils.js', () => ({
+  CONFIG: {
+    projectVersion: '1.5.0'
+  },
+  log: jest.fn()
+}));
+
+// 3. 在定义所有模拟后导入模块
+import { functionToTest } from '../../scripts/modules/module-name.js';
+import { testFixture } from '../fixtures/fixture-name.js';
+import fs from 'fs';
+
+// 4. 如有需要，为模拟模块设置间谍
+const mockReadFileSync = jest.spyOn(fs, 'readFileSync');
+
+// 5. 具有描述性名称的测试套件
+describe('功能或函数名称', () => {
+  // 6. 设置和清理（如有需要）
+  beforeEach(() => {
+    jest.clearAllMocks();
+    // 额外的设置代码
+  });
+  
+  afterEach(() => {
+    // 清理代码
+  });
+  
+  // 7. 为相关功能分组的测试
+  describe('特定功能', () => {
+    // 8. 具有清晰描述的单个测试用例
+    test('在给定特定输入时应按预期方式表现', () => {
+      // 安排 - 设置测试数据
+      const input = testFixture.sampleInput;
+      mockReadFileSync.mockReturnValue('模拟内容');
+      
+      // 行动 - 调用被测试的函数
+      const result = functionToTest(input);
+      
+      // 断言 - 验证结果
+      expect(result).toBe(expectedOutput);
+      expect(mockReadFileSync).toHaveBeenCalledWith(expect.stringContaining('path'));
+    });
+  });
+});
+```
+
+## Commander.js 命令测试最佳实践
+
+在测试使用 Commander.js 构建的 CLI 命令时，为了避免常见陷阱，需要考虑以下几点：
+
+- **直接操作处理器测试**
+  - ✅ **DO**：直接测试命令操作处理器，而不是尝试模拟整个 Commander.js 链
+  - ✅ **DO**：创建与原始行为匹配的测试特定实现的命令处理器
+  - ✅ **DO**：明确处理所有选项，包括默认值和简写标志（例如 `-p` 表示 `--prompt`）
+  - ✅ **DO**：在测试实现中为可能的可选参数包含空值/未定义检查
+  - ✅ **DO**：使用 `tests/fixtures/` 中的测试用具，以确保测试中一致的样本数据
+  
+  ```javascript
+  // ✅ DO：创建命令处理器的简化测试版本
+  const testAddTaskAction = async (options) => {
+    options = options || {}; // 确保 options 不是 undefined
+    
+    // 验证参数
+    const isManualCreation = options.title && options.description;
+    const prompt = options.prompt || options.p; // 处理简写标志
+    
+    if (!prompt && !isManualCreation) {
+      throw new Error('预期错误消息');
+    }
+    
+    // 调用模拟的任务管理器
+    return mockTaskManager.addTask(/* 参数 */);
+  };
+  
+  test('应正确处理必需参数', async () => {
+    // 直接调用测试实现
+    await expect(async () => {
+      await testAddTaskAction({ file: 'tasks.json' });
+    }).rejects.toThrow('预期错误消息');
+  });
+  ```
+
+- **Commander 链模拟（如有必要）**
+  - ✅ **DO**：模拟所有可链式调用的方法（`option`、`argument`、`action`、`on` 等）
+  - ✅ **DO**：从所有链式方法模拟中返回 `this`（或模拟对象）
+  - ✅ **DO**：记得不仅模拟初始对象，还要模拟方法返回的所有对象
+  - ✅ **DO**：实现一种机制以捕获操作处理器以便直接测试
+  
+  ```javascript
+  // 如果必须模拟 Commander.js 链：
+  const mockCommand = {
+    command: jest.fn().mockReturnThis(),
+    description: jest.fn().mockReturnThis(),
+    option: jest.fn().mockReturnThis(),
+    argument: jest.fn().mockReturnThis(), // 别忘了这个
+    action: jest.fn(fn => { 
+      actionHandler = fn; // 捕获处理器以便测试
+      return mockCommand; 
+    }),
+    on: jest.fn().mockReturnThis() // 别忘了这个
+  };
+  ```
+
+- **参数处理**
+  - ✅ **DO**：检查主要标志和简写标志（例如 `prompt` 和 `p`）
+  - ✅ **DO**：像 Commander 那样处理参数（逗号分隔列表等）
+  - ✅ **DO**：设置命令中定义的适当默认值
+  - ✅ **DO**：在测试中验证必需参数确实是必需的
+  
+  ```javascript
+  // 像 Commander 那样解析依赖项
+  const dependencies = options.dependencies 
+    ? options.dependencies.split(',').map(id => id.trim())
+    : [];
+  ```
+
+- **环境和会话处理**
+  - ✅ **DO**：在函数需要时正确模拟会话对象
+  - ✅ **DO**：如果修改了环境变量，则在测试之间重置
+  - ✅ **DO**：使用一致的模式进行依赖环境的测试
+  
+  ```javascript
+  // 会话参数模拟模式
+  const sessionMock = { session: process.env };
+  
+  // 在测试中：
+  expect(mockAddTask).toHaveBeenCalledWith(
+    expect.any(String),
+    '测试提示',
+    [],
+    'medium',
+    sessionMock,
+    false,
+    null,
+    null
+  );
+  ```
+
+- **常见陷阱要避免**
+  - ❌ **DON'T**：在没有正确模拟的情况下使用实际操作实现
+  - ❌ **DON'T**：部分模拟 Commander - 要么完全模拟，要么直接测试操作
+  - ❌ **DON'T**：忘记处理可能未定义的可选参数
+  - ❌ **DON'T**：忽视简写标志功能的测试（例如 `-p`、`-r`）
+  - ❌ **DON'T**：在测试模拟中创建循环依赖
+  - ❌ **DON'T**：在测试实现中在初始化之前访问变量
+  - ❌ **DON'T**：在单元测试中包含实际命令执行
+  - ❌ **DON'T**：在多个测试中覆盖相同的文件路径
+  
+  ```javascript
+  // ❌ DON'T：创建循环引用的模拟
+  const badMock = {
+    method: jest.fn().mockImplementation(() => badMock.method())
+  };
+  
+  // ❌ DON'T：访问未初始化的变量
+  const badImplementation = () => {
+    const result = uninitialized;
+    let uninitialized = 'value';
+    return result;
+  };
+  ```
+
+## Jest 模块模拟最佳实践
+
+- **模拟提升行为**
+  - Jest 会将 `jest.mock()` 调用提升到文件顶部，甚至在导入之前
+  - 总是在导入被测试模块之前声明模拟
+  - 使用工厂模式为需要访问其他变量的复杂模拟提供支持
+
+  ```javascript
+  // ✅ DO：将模拟放在导入之前
+  jest.mock('commander');
+  import { program } from 'commander';
+  
+  // ❌ DON'T：定义变量，然后尝试在模拟中使用它们
+  const mockFn = jest.fn();
+  jest.mock('module', () => ({
+    func: mockFn // 由于提升，这将不起作用！
+  }));
+  ```
+
+- **模拟带有函数引用的模块**
+  - 在导入后使用 `jest.spyOn()` 创建对模拟函数的间谍
+  - 在测试断言中引用这些间谍
+  
+  ```javascript
+  // 首先模拟模块
+  jest.mock('fs');
+  
+  // 导入模拟模块
+  import fs from 'fs';
+  
+  // 为模拟函数创建间谍
+  const mockExistsSync = jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+  
+  test('应调用 existsSync', () => {
+    // 调用使用 fs.existsSync 的函数
+    const result = functionUnderTest();
+    
+    // 验证模拟是否正确调用
+    expect(mockExistsSync).toHaveBeenCalled();
+  });
+  ```
+
+- **测试带有回调的函数**
+  - 从模拟的调用参数中获取回调
+  - 直接用测试输入执行它
+  - 验证结果是否符合预期
+  
+  ```javascript
+  jest.mock('commander');
+  import { program } from 'commander';
+  import { setupCLI } from '../../scripts/modules/commands.js';
+  
+  const mockVersion = jest.spyOn(program, 'version').mockReturnValue(program);
+  
+  test('版本回调应返回正确版本', () => {
+    // 调用注册回调的函数
+    setupCLI();
+    
+    // 提取回调函数
+    const versionCallback = mockVersion.mock.calls[0][0];
+    expect(typeof versionCallback).toBe('function');
+    
+    // 执行回调并验证结果
+    const result = versionCallback();
+    expect(result).toBe('1.5.0');
+  });
+  ```
+
+## ES 模块测试策略
+
+当测试 ES 模块（`package.json` 中的 `"type": "module"`）时，传统的模拟方法需要特别处理，以避免引用和作用域问题。
+
+- **模块导入挑战**
+  - 从 ES 模块导入的函数可能仍然引用内部模块作用域变量
+  - 即使正确设置了 `jest.mock()`，导入的函数也可能不使用你的模拟依赖
+  - ES 模块导出是只读属性（在测试期间不能重新分配）
+
+- **模拟静态导入的模块**
+  - 对于在顶层使用标准 `import` 语句导入的模块：
+    - 使用 `jest.mock('path/to/module', factory)` **在任何导入之前**。
+    - Jest 会提升这些模拟。
+    - 确保工厂函数正确返回模拟结构。
+
+- **模拟动态导入模块的依赖**
+  - **问题**：对于使用动态 `import('path/to/module')` 加载的模块的依赖，标准 `jest.mock()` 通常会失败。当动态导入解析时，模拟没有正确应用。
+  - **解决方案**：在动态 `import()` 调用之前使用 `jest.unstable_mockModule(modulePath, factory)`。
+  ```javascript
+  // 1. 定义模拟函数实例
+  const mockExistsSync = jest.fn();
+  const mockReadFileSync = jest.fn();
+  // ... 其他模拟
+
+  // 2. 在动态导入之前模拟依赖模块
+  jest.unstable_mockModule('fs', () => ({
+    __esModule: true, // 对于 ES 模块模拟很重要
+    // 模拟具名导出
+    existsSync: mockExistsSync,
+    readFileSync: mockReadFileSync,
+    // 如有必要，模拟默认导出
+    // default: { ... }
+  }));
+
+  // 3. 动态导入被测试模块（例如，在 beforeAll 或测试用例中）
+  let moduleUnderTest;
+  beforeAll(async () => {
+    // 如果需要，在导入之前重置模拟（如果它们可能已经被调用过）
+    mockExistsSync.mockReset();
+    mockReadFileSync.mockReset();
+    // ... 重置其他模拟 ...
+
+    // 在调用 unstable_mockModule 后导入
+    moduleUnderTest = await import('../../scripts/modules/module-using-fs.js');
+  });
+
+  // 4. 现在测试可以使用 moduleUnderTest，其对 'fs' 的调用将命中模拟
+  test('应使用模拟的 fs.readFileSync', () => {
+    mockReadFileSync.mockReturnValue('模拟数据');
+    moduleUnderTest.readFileAndProcess();
+    expect(mockReadFileSync).toHaveBeenCalled();
+    // ... 其他断言
+  });
+  ```
+  - ✅ **DO**：在 `await import()` 之前调用 `jest.unstable_mockModule()`。
+  - ✅ **DO**：在模拟工厂中包含 `__esModule: true` 用于 ES 模块。
+  - ✅ **DO**：根据需要在工厂中模拟具名和默认导出。
+  - ✅ **DO**：在动态导入之前使用 `mockFn.mockReset()` 重置模拟函数（如果它们可能已经被调用过）。
+
+- **模拟整个模块（静态导入）**
+  ```javascript
+  // 使用自定义实现模拟整个模块用于静态导入
+  // ...（现有示例仍然有效）...
+  ```
+
+- **直接实现测试**
+  - 代替调用可能有模块作用域引用问题的实际函数：
+  ```javascript
+  // ...（现有示例仍然有效）...
+  ```
+
+- **避免模块属性赋值**
+  ```javascript
+  // ...（现有示例仍然有效）...
+  ```
+
+- **处理模拟验证失败**
+  - 如果验证如 `expect(mockFn).toHaveBeenCalled()` 失败：
+    1. 检查你的模拟设置（`jest.mock` 或 `jest.unstable_mockModule`）是否正确放置在导入（静态或动态）之前。
+    2. 确保你使用的是正确的模拟实例，并且它已正确传递给模块。
+    3. 验证你的测试是否调用了应触发模拟的行为。
+    4. 在 `beforeEach` 中使用 `jest.clearAllMocks()` 或特定的 `mockFn.mockReset()`，以防止测试之间的状态泄漏。
+    5. **检查控制台断言**：如果验证 `console.log`、`console.warn` 或 `console.error` 调用，确保你的断言与实际传递的参数匹配。如果代码记录了一个格式化的字符串，就用 `expect.stringContaining` 或精确匹配来断言，而不是多个 `expect.stringContaining` 参数。
+        ```javascript
+        // 示例：代码记录 console.error(`Error: ${message}. Details: ${details}`)
+        // ❌ DON'T：如果只记录一个参数，不要断言多个参数
+        // expect(console.error).toHaveBeenCalledWith(
+        //   expect.stringContaining('Error:'),
+        //   expect.stringContaining('Details:')
+        // );
+        // ✅ DO：断言单个字符串参数
+        expect(console.error).toHaveBeenCalledWith(
+           expect.stringContaining('Error: Specific message. Details: More details')
+        );
+        // 或者精确匹配：
+        expect(console.error).toHaveBeenCalledWith(
+           'Error: Specific message. Details: More details'
+        );
+        ```
+    6. 考虑实现一个只验证模拟行为的简单测试。
+
+## 模拟指南
+
+- **文件系统操作**
+  ```javascript
+  import mockFs from 'mock-fs';
+  
+  beforeEach(() => {
+    mockFs({
+      'tasks': {
+        'tasks.json': JSON.stringify({
+          meta: { projectName: '测试项目' },
+          tasks: []
+        })
+      }
+    });
+  });
+  
+  afterEach(() => {
+    mockFs.restore();
+  });
+  ```
+
+- **API 调用（Anthropic/Claude）**
+  ```javascript
+  import { Anthropic } from '@anthropic-ai/sdk';
+  
+  jest.mock('@anthropic-ai/sdk');
+  
+  beforeEach(() => {
+    Anthropic.mockImplementation(() => ({
+      messages: {
+        create: jest.fn().mockResolvedValue({
+          content: [{ text: '模拟响应' }]
+        })
+      }
+    }));
+  });
+  ```
+
+- **环境变量**
+  ```javascript
+  const originalEnv = process.env;
+  
+  beforeEach(() => {
+    jest.resetModules();
+    process.env = { ...originalEnv };
+    process.env.MODEL = '测试模型';
+  });
+  
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+  ```
+
+## 测试常见组件
+
+- **CLI 命令**
+  - 模拟操作处理器（定义在 [`commands.js`](mdc:scripts/modules/commands.js) 中）并验证它们是否被正确调用
+  - 测试命令注册和选项解析
+  - 使用 Commander 测试工具或自定义模拟
+
+- **任务操作**
+  - 使用样本任务测试用具以确保测试数据一致
+  - 模拟文件系统操作
+  - 测试成功和错误路径
+
+- **UI 函数**
+  - 模拟控制台输出并验证正确的格式
+  - 测试条件输出逻辑
+  - 当测试带有表情符号或格式化的字符串时，使用 `toContain()` 或 `toMatch()` 而不是精确的 `toBe()` 比较
+  - 对于具有不同行为模式的函数（例如 `forConsole`、`forTable` 参数），为每种模式创建单独的测试
+  - 测试格式化输出的结构（例如，检查它是否是一个逗号分隔的列表，且包含正确数量的项目），而不是精确的字符串匹配
+  - 当测试 chalk 格式化的输出时，记住严格相等比较（`toBe()`）即使在可见输出看起来相同的情况下也可能失败
+  - 考虑在处理样式化文本时，使用更灵活的断言来检查关键元素的存在，而不是严格比较
+
+## 测试质量指南
+
+- ✅ **DO**：在实现功能之前编写测试（尽可能采用 TDD 方法）
+- ✅ **DO**：测试边缘情况和错误条件，而不仅仅是正常路径
+- ✅ **DO**：保持测试独立且相互隔离
+- ✅ **DO**：使用描述性的测试名称来解释预期行为
+- ✅ **DO**：将测试用具与测试逻辑分开维护
+- ✅ **DO**：目标是达到 80% 以上的代码覆盖率，关键路径达到 100%
+- ✅ **DO**：遵循先模拟后导入的模式进行所有 Jest 模拟
+
+- ❌ **DON'T**：测试可能会改变的实现细节
+- ❌ **DON'T**：编写依赖于特定输出格式的脆弱测试
+- ❌ **DON'T**：跳过测试错误处理和验证
+- ❌ **DON'T**：在多个测试文件中重复测试用具
+- ❌ **DON'T**：编写依赖于执行顺序的测试
+- ❌ **DON'T**：在 `jest.mock()` 调用之前定义模拟变量（由于提升，它们将无法访问）
+
+- **任务文件操作**
+  - ✅ **DO**：为所有操作使用测试特定的文件路径（例如 `test-tasks.json`）
+  - ✅ **DO**：模拟 `readJSON` 和 `writeJSON` 以避免实际文件系统交互
+  - ✅ **DO**：在 `expect` 语句中验证文件操作是否使用正确的路径
+  - ✅ **DO**：为每个测试使用不同的路径，以避免测试之间的依赖
+  - ✅ **DO**：验证传递给 `writeJSON` 的内存中任务对象的修改
+  - ❌ **DON'T**：在测试期间修改实际任务文件（`tasks.json`）
+  - ❌ **DON'T**：跳过测试文件操作，因为它们只是 I/O
+
+  ```javascript
+  // ✅ DO：测试文件操作而不改变实际文件系统
+  test('应在 tasks.json 中更新任务状态', async () => {
+    // 设置模拟以返回样本数据
+    readJSON.mockResolvedValue(JSON.parse(JSON.stringify(sampleTasks)));
+    
+    // 使用测试特定的文件路径
+    await setTaskStatus('test-tasks.json', '2', 'done');
+    
+    // 验证是否正确读取了文件路径
+    expect(readJSON).toHaveBeenCalledWith('test-tasks.json');
+    
+    // 验证是否使用正确的路径和更新的内容写入文件
+    expect(writeJSON).toHaveBeenCalledWith(
+      'test-tasks.json',
+      expect.objectContaining({
+        tasks: expect.arrayContaining([
+          expect.objectContaining({
+            id: 2,
+            status: 'done'
+          })
+        ])
+      })
+    );
+  });
+  ```
+
+## 运行测试
+
+```bash
+# 运行所有测试
+npm test
+
+# 以监视模式运行测试
+npm run test:watch
+
+# 运行带有覆盖率报告的测试
+npm run test:coverage
+
+# 运行特定的测试文件
+npm test -- tests/unit/specific-file.test.js
+
+# 运行匹配模式的测试
+npm test -- -t "要匹配的模式"
+```
+
+## 排查测试问题
+
+- **模拟函数未被调用**
+  - 确保在导入之前定义模拟（Jest 会提升 `jest.mock()` 调用）
+  - 检查你是否引用了正确的模拟实例
+  - 验证导入路径是否完全匹配
+
+- **意外的模拟行为**
+  - 在 `beforeEach` 中使用 `jest.clearAllMocks()` 清除模拟
+  - 检查模拟实现是否有条件行为
+  - 确保模拟的返回值已为每个测试正确配置
+
+- **测试相互影响**
+  - 通过正确模拟共享资源来隔离测试
+  - 在 `beforeEach` 和 `afterEach` 钩子中重置状态
+  - 避免修改全局状态
+
+## 常见测试陷阱及解决方案
+
+- **复杂库模拟**
+  - **问题**：尝试创建像 Commander.js 这样复杂库的完整模拟可能会出错
+  - **解决方案**：与其模拟整个库，不如直接测试命令操作处理器，通过调用你的操作处理器并传递预期参数来测试
+  ```javascript
+  // ❌ DON'T：创建 Commander.js 的复杂模拟
+  class MockCommand {
+    constructor() { /* 复杂的模拟实现 */ }
+    option() { /* ... */ }
+    action() { /* ... */ }
+    // 很多方法需要实现
+  }
+  
+  // ✅ DO：直接测试命令操作处理器
+  test('当没有参数提供时应使用默认 PRD 路径', async () => {
+    // 直接调用操作处理器并传递正确的参数
+    await parsePrdAction(undefined, { numTasks: '10', output: 'tasks/tasks.json' });
+    
+    // 断言行为
+    expect(mockParsePRD).toHaveBeenCalledWith('scripts/prd.txt', 'tasks/tasks.json', 10);
+  });
+  ```
+
+- **ES 模块模拟挑战**
+  - **问题**：ES 模块不支持 `require()`，且导入是只读的
+  - **解决方案**：使用 Jest 的模块工厂模式，并确保在导入之前定义模拟
+  ```javascript
+  // ❌ DON'T：尝试修改导入的模块
+  import { detectCamelCaseFlags } from '../../scripts/modules/utils.js';
+  detectCamelCaseFlags = jest.fn(); // 错误：不允许修改常量变量
+  
+  // ❌ DON'T：在 ES 模块中使用 require
+  const utils = require('../../scripts/modules/utils.js'); // ES 模块中的错误
+  
+  // ✅ DO：使用 Jest 模块工厂模式
+  jest.mock('../../scripts/modules/utils.js', () => ({
+    detectCamelCaseFlags: jest.fn(),
+    toKebabCase: jest.fn()
+  }));
+  
+  // 在定义模拟后导入
+  import { detectCamelCaseFlags } from '../../scripts/modules/utils.js';
+  ```
+
+- **函数重复声明错误**
+  - **问题**：在测试文件中重复声明同一个函数会导致错误
+  - **解决方案**：使用不同的函数名称或创建本地测试特定的实现
+  ```javascript
+  // ❌ DON'T：使用相同的名称重新声明导入的函数
+  import { detectCamelCaseFlags } from '../../scripts/modules/utils.js';
+  
+  function detectCamelCaseFlags() { /* 测试实现 */ }
+  // 错误：标识符已声明
+  
+  // ✅ DO：为测试实现使用不同的名称
+  function testDetectCamelCaseFlags() { /* 测试实现 */ }
+  ```
+
+- **控制台循环引用**
+  - **问题**：通过在控制台日志上设置间谍同时又允许它记录，会创建无限递归
+  - **解决方案**：实现一个不会调用原始函数的模拟
+  ```javascript
+  // ❌ DON'T：创建控制台日志的循环引用
+  const mockConsoleLog = jest.spyOn(console, 'log');
+  mockConsoleLog.mockImplementation(console.log); // 创建无限递归
+  
+  // ✅ DO：使用非递归的模拟实现
+  const mockConsoleLog = jest.spyOn(console, 'log').mockImplementation(() => {});
+  ```
+
+- **模拟函数方法问题**
+  - **问题**：尝试在未正确模拟的导入函数上使用 `jest.fn()` 方法
+  - **解决方案**：为需要调用 `jest` 方法的函数创建明确的 `jest.fn()` 模拟
+  ```javascript
+  // ❌ DON'T：在没有正确模拟的导入函数上使用 jest 方法
+  import { parsePRD } from '../../scripts/modules/task-manager.js';
+  parsePRD.mockClear(); // 错误：parsePRD.mockClear 不是函数
+  
+  // ✅ DO：创建正确的 jest.fn() 模拟
+  const mockParsePRD = jest.fn().mockResolvedValue(undefined);
+  jest.mock('../../scripts/modules/task-manager.js', () => ({
+    parsePRD: mockParsePRD
+  }));
+  // 现在可以使用：
+  mockParsePRD.mockClear();
+  ```
+
+- **EventEmitter 最大监听器警告**
+  - **问题**：Commander.js 在复杂模拟中添加了许多监听器，导致警告
+  - **解决方案**：要么增加最大监听器限制，要么避免深度模拟
+  ```javascript
+  // 选项 1：如果必须模拟 Commander，增加最大监听器限制
+  class MockCommand extends EventEmitter {
+    constructor() {
+      super();
+      this.setMaxListeners(20); // 避免 MaxListenersExceededWarning
+    }
+  }
+  
+  // 选项 2（推荐）：直接测试命令操作处理器（如第一个示例所示）
+  ```
+
+- **测试隔离问题**
+  - **问题**：由于共享模拟状态，测试相互影响
+  - **解决方案**：在 `beforeEach` 中重置所有模拟，并使用单独的测试特定模拟
+  ```javascript
+  // ❌ DON'T：允许模拟状态在测试之间持续存在
+  const globalMock = jest.fn().mockReturnValue('test');
+  
+  // ✅ DO：在每个测试之前清除模拟
+  beforeEach(() => {
+    jest.clearAllMocks();
+    // 设置测试特定的模拟行为
+    mockFunction.mockReturnValue('测试特定值');
+  });
+  ```
+
+## 测试 AI 服务集成
+
+- **不要导入实际的 AI 服务客户端**
+  - ❌ **DON'T**：从其库中导入实际的 AI 客户端
+  - ✅ **DO**：创建完全模拟的版本，返回可预测的响应
+
+  ```javascript
+  // ❌ DON'T：导入并实例化实际的 AI 客户端
+  import { Anthropic } from '@anthropic-ai/sdk';
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  // ✅ DO：用受控行为模拟整个模块
+  jest.mock('@anthropic-ai/sdk', () => ({
+    Anthropic: jest.fn().mockImplementation(() => ({
+      messages: {
+        create: jest.fn().mockResolvedValue({
+          content: [{ type: 'text', text: '模拟 AI 响应' }]
+        })
+      }
+    }))
+  }));
+  ```
+
+- **不要依赖环境变量中的 API 密钥**
+  - ❌ **DON'T**：假设测试中设置了环境变量
+  - ✅ **DO**：在测试设置中设置模拟环境变量
+
+  ```javascript
+  // 在 tests/setup.js 或测试文件顶部
+  process.env.ANTHROPIC_API_KEY = '测试模拟 API 密钥';
+  process.env.PERPLEXITY_API_KEY = '测试模拟 Perplexity 密钥';
+  ```
+
+- **不要使用实际的 AI 客户端初始化逻辑**
+  - ❌ **DON'T**：使用尝试初始化或验证实际 AI 客户端的代码
+  - ✅ **DO**：创建测试特定的路径，绕过客户端初始化
+
+  ```javascript
+  // ❌ DON'T：测试需要有效 AI 客户端初始化的函数
+  // 如果没有正确的 API 密钥或网络访问，这将失败
+  test('应使用 AI 客户端', async () => {
+    const result = await functionThatInitializesAIClient();
+    expect(result).toBeDefined();
+  });
+
+  // ✅ DO：测试绕过初始化或手动任务路径
+  test('应手动处理任务创建而不使用 AI', () => {
+    // 使用不需要 AI 客户端初始化的路径
+    const result = addTaskDirect({ 
+      title: '手动任务', 
+      description: '测试描述'
+    }, mockLogger);
+    
+    expect(result.success).toBe(true);
+  });
+  ```
+
+## 测试异步代码
+
+- **不要在测试中依赖异步操作**
+  - ❌ **DON'T**：在测试中使用实际的 `async/await` 或 `Promise` 解析
+  - ✅ **DO**：尽可能使所有模拟返回同步值
+
+  ```javascript
+  // ❌ DON'T：使用实际的异步函数，可能会不可预测地失败
+  test('应处理异步操作', async () => {
+    const result = await realAsyncFunction(); // 可能因外部原因超时或失败
+    expect(result).toBe(expectedValue);
+  });
+
+  // ✅ DO：在测试中使异步操作同步
+  test('应处理操作', () => {
+    mockAsyncFunction.mockReturnValue({ success: true, data: 'test' });
+    const result = functionUnderTest();
+    expect(result).toEqual({ success: true, data: 'test' });
+  });
+  ```
+
+- **不要测试精确的错误消息**
+  - ❌ **DON'T**：断言可能会改变的精确错误消息文本
+  - ✅ **DO**：测试错误的存在和一般属性
+
+  ```javascript
+  // ❌ DON'T：测试精确的错误消息文本
+  expect(result.error).toBe('无法连接到 API：网络错误');
+
+  // ✅ DO：测试错误的一般属性或消息模式
+  expect(result.success).toBe(false);
+  expect(result.error).toContain('无法连接');
+  // 或者更好：
+  expect(result).toMatchObject({ 
+    success: false,
+    error: expect.stringContaining('连接')
+  });
+  ```
+
+## 可靠的测试技术
+
+- **创建简化的测试函数**
+  - 创建简化的复杂函数版本，只关注核心逻辑
+  - 移除文件系统操作、API 调用和其他外部依赖
+  - 将所有依赖作为参数传递，使测试更容易
+
+  ```javascript
+  // 原始函数（难以测试）
+  const setTaskStatus = async (taskId, newStatus) => {
+    const tasksPath = 'tasks/tasks.json';
+    const data = await readJSON(tasksPath);
+    // [实现]
+    await writeJSON(tasksPath, data);
+    return { success: true };
+  };
+  
+  // 测试友好版本（更容易测试）
+  const updateTaskStatus = (tasks, taskId, newStatus) => {
+    // 纯逻辑，没有副作用
+    const updatedTasks = [...tasks];
+    const taskIndex = findTaskById(updatedTasks, taskId);
+    if (taskIndex === -1) return { success: false, error: '未找到任务' };
+    updatedTasks[taskIndex].status = newStatus;
+    return { success: true, tasks: updatedTasks };
+  };
+  ```
+
+参见 [tests/README.md](mdc:tests/README.md) 了解更多信息。
+
+参阅 [jest.config.js](mdc:jest.config.js) 了解 Jest 配置选项。
+
+## 变量提升和模块初始化问题
+
+当测试 ES 模块或处理复杂的模块导入时，你可能会遇到变量提升和初始化问题。这些问题通常很难调试，并且经常以 “无法在初始化之前访问 ‘X’” 的形式出现。
+
+- **了解模块初始化顺序**
+  - ✅ **DO**：在模块顶部声明并初始化全局变量
+  - ✅ **DO**：使用正确的函数声明来避免提升问题
+  - ✅ **DO**：在引用之前初始化变量，特别是在导入模块中
+  - ✅ **DO**：了解导入会被提升到文件顶部
+  
+  ```javascript
+  // ✅ DO：在模块顶部定义全局状态变量
+  let silentMode = false; // 声明并初始化
+  const CONFIG = { /* 配置 */ };
+  
+  function isSilentMode() {
+    return silentMode; // 引用已初始化的变量
+  }
+  
+  function log(level, message) {
+    if (isSilentMode()) return; // 使用函数而不是直接访问变量
+    // ...
+  }
+  ```
+
+- **测试具有初始化依赖的模块**
+  - ✅ **DO**：创建测试特定的实现，正确初始化所有变量
+  - ✅ **DO**：在模拟中使用工厂函数以确保正确的初始化顺序
+  - ✅ **DO**：小心模拟或桩函数，它们依赖于模块状态
+  
+  ```javascript
+  // ✅ DO：避免初始化问题的测试特定实现
+  const testLog = (level, ...args) => {
+    // 本地实现，正确初始化
+    const isSilent = false; // 明确初始化
+    if (isSilent) return;
+    // 测试实现...
+  };
+  ```
+
+- **常见的提升相关错误要避免**
+  - ❌ **DON'T**：在模块作用域中引用变量，然后才声明它们
+  - ❌ **DON'T**：在模块之间创建循环依赖
+  - ❌ **DON'T**：依赖于跨越模块边界的变量初始化顺序
+  - ❌ **DON'T**：定义使用提升变量的函数，然后才初始化它们
+  
+  ```javascript
+  // ❌ DON'T：创建引用-声明顺序错误
+  function badFunction() {
+    if (silentMode) { /* ... */ } // 如果 silentMode 后面声明，会报 ReferenceError
+  }
+  
+  let silentMode = false;
+  
+  // ❌ DON'T：创建依赖于初始化顺序的跨模块引用
+  // module-a.js
+  import { getSetting } from './module-b.js';
+  export const config = { value: getSetting() };
+  
+  // module-b.js
+  import { config } from './module-a.js';
+  export function getSetting() {
+    return config.value; // 循环依赖导致初始化问题
+  }
+  ```
+
+- **动态导入作为解决方案**
+  - ✅ **DO**：使用动态导入 (`import()`) 来避免初始化顺序问题
+  - ✅ **DO**：构建模块以避免导致初始化问题的循环依赖
+  - ✅ **DO**：考虑为具有复杂状态的模块使用工厂函数
+  
+  ```javascript
+  // ✅ DO：使用动态导入避免初始化问题
+  async function getTaskManager() {
+    return import('./task-manager.js');
+  }
+  
+  async function someFunction() {
+    const taskManager = await getTaskManager();
+    return taskManager.someMethod();
+  }
+  ```
+
+- **测试具有初始化问题的模块的方法**
+  - ✅ **DO**：创建自包含的测试实现，而不是使用实际实现
+  - ✅ **DO**：在模块边界模拟依赖，而不是尝试模拟深层依赖
+  - ✅ **DO**：在测试中隔离模块特定状态
+  
+  ```javascript
+  // ✅ DO：创建隔离的测试实现，而不是重用模块代码
+  test('在非静默模式下应记录消息', () => {
+    // 本地测试实现，而不是从模块导入
+    const testLog = (level, message) => {
+      if (false) return; // 始终非静默用于此测试
+      mockConsole(level, message);
+    };
+    
+    testLog('info', '测试消息');
+    expect(mockConsole).toHaveBeenCalledWith('info', '测试消息');
+  });
+  ```

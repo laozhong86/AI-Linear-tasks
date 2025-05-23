@@ -1,0 +1,296 @@
+---
+description: Guidelines for implementing task management operations
+globs: scripts/modules/task-manager.js
+alwaysApply: false
+---
+## 任务管理指南
+### 任务结构标准
+- **核心任务属性**：
+  - ✅ 务必：在每个任务对象中包含所有必需的属性。
+  - ✅ 务必：为可选属性提供默认值。
+  - ❌ 切勿：添加标准模式中不存在的额外属性。
+  ```javascript
+  // ✅ 务必：遵循任务对象的此结构
+  const task = {
+    id: nextId,
+    title: "任务标题",
+    description: "任务简要描述",
+    status: "pending", // "pending"（待办）、"in-progress"（进行中）、"done"（已完成）等
+    dependencies: [], // 任务ID数组
+    priority: "medium", // "high"（高）、"medium"（中）、"low"（低）
+    details: "详细的实施说明",
+    testStrategy: "验证方法",
+    subtasks: [] // 子任务对象数组
+  };
+  ```
+- **子任务结构**：
+  - ✅ 务必：在所有子任务中使用一致的属性。
+  - ✅ 务必：在父任务中保持简单的数字ID。
+  - ❌ 切勿：在子任务中重复父任务的属性。
+  ```javascript
+  // ✅ 务必：始终如一地构建子任务
+  const subtask = {
+    id: nextSubtaskId, // 简单数字ID，在父任务中唯一
+    title: "子任务标题",
+    description: "子任务简要描述",
+    status: "pending",
+    dependencies: [], // 可以包含数字ID（其他子任务）或完整的任务ID
+    details: "详细的实施说明"
+  };
+  ```
+### 任务创建与解析
+- **ID管理**：
+  - ✅ 务必：为任务分配唯一的顺序ID。
+  - ✅ 务必：根据现有任务计算下一个ID。
+  - ❌ 切勿：硬编码或重复使用ID。
+  ```javascript
+  // ✅ 务必：计算下一个可用的ID
+  const highestId = Math.max(...data.tasks.map(t => t.id));
+  const nextTaskId = highestId + 1;
+  ```
+- **PRD解析**：
+  - ✅ 务必：使用人工智能从PRD文档中提取任务。
+  - ✅ 务必：提供清晰的提示以指导人工智能生成任务。
+  - ✅ 务必：验证并清理人工智能生成的任务。
+  ```javascript
+  // ✅ 务必：验证人工智能的响应
+  try {
+    // 解析JSON响应
+    taskData = JSON.parse(jsonContent);
+    
+    // 检查是否有必填字段
+    if (!taskData.title || !taskData.description) {
+      throw new Error("生成的任务中缺少必填字段");
+    }
+  } catch (error) {
+    log('error', "无法将人工智能的响应解析为有效的任务JSON：", error);
+    process.exit(1);
+  }
+  ```
+### 任务更新与修改
+- **状态管理**：
+  - ✅ 务必：提供用于更新任务状态的函数。
+  - ✅ 务必：同时处理单个任务和子任务。
+  - ✅ 务必：在更新父任务时考虑子任务的状态。
+  ```javascript
+  // ✅ 务必：同时处理任务和子任务的状态更新
+  async function setTaskStatus(tasksPath, taskIdInput, newStatus) {
+    // 检查是否是子任务（例如，"1.2"）
+    if (taskIdInput.includes('.')) {
+      const [parentId, subtaskId] = taskIdInput.split('.').map(id => parseInt(id, 10));
+      
+      // 查找父任务和子任务
+      const parentTask = data.tasks.find(t => t.id === parentId);
+      const subtask = parentTask.subtasks.find(st => st.id === subtaskId);
+      
+      // 更新子任务状态
+      subtask.status = newStatus;
+      
+      // 检查是否所有子任务都已完成
+      if (newStatus === 'done') {
+        const allSubtasksDone = parentTask.subtasks.every(st => st.status === 'done');
+        if (allSubtasksDone) {
+          // 建议更新父任务
+        }
+      }
+    } else {
+      // 处理常规任务
+      const task = data.tasks.find(t => t.id === parseInt(taskIdInput, 10));
+      task.status = newStatus;
+      
+      // 如果标记为已完成，也标记子任务
+      if (newStatus === 'done' && task.subtasks && task.subtasks.length > 0) {
+        task.subtasks.forEach(subtask => {
+          subtask.status = newStatus;
+        });
+      }
+    }
+  }
+  ```
+- **任务扩展**：
+  - ✅ 务必：使用人工智能生成详细的子任务。
+  - ✅ 务必：在确定子任务数量时考虑复杂性分析。
+  - ✅ 务必：确保新创建的子任务具有正确的ID。
+  ```javascript
+  // ✅ 务必：根据复杂性生成适当的子任务
+  if (taskAnalysis) {
+    log('info', `发现任务 ${taskId} 的复杂性分析：得分 ${taskAnalysis.complexityScore}/10`);
+    
+    // 如果可用，使用推荐的子任务数量
+    if (taskAnalysis.recommendedSubtasks && numSubtasks === CONFIG.defaultSubtasks) {
+      numSubtasks = taskAnalysis.recommendedSubtasks;
+      log('info', `使用推荐的子任务数量：${numSubtasks}`);
+    }
+  }
+  ```
+### 任务文件生成
+- **文件格式化**：
+  - ✅ 务必：对任务文件使用一致的格式。
+  - ✅ 务必：在文本文件中包含所有任务属性。
+  - ✅ 务必：使用状态指示符格式化依赖项。
+  ```javascript
+  // ✅ 务必：使用一致的文件格式
+  let content = `# 任务ID：${task.id}\n`;
+  content += `# 标题：${task.title}\n`;
+  content += `# 状态：${task.status || 'pending'}\n`;
+  
+  // 格式化带有状态的依赖项
+  if (task.dependencies && task.dependencies.length > 0) {
+    content += `# 依赖项：${formatDependenciesWithStatus(task.dependencies, data.tasks)}\n`;
+  } else {
+    content += '# 依赖项：无\n';
+  }
+  ```
+- **包含子任务**：
+  - ✅ 务必：在父任务文件中包含子任务。
+  - ✅ 务必：对子任务部分使用一致的缩进。
+  - ✅ 务必：以正确的格式显示子任务的依赖项。
+  ```javascript
+  // ✅ 务必：在任务文件中正确格式化子任务
+  if (task.subtasks && task.subtasks.length > 0) {
+    content += '\n# 子任务：\n';
+    
+    task.subtasks.forEach(subtask => {
+      content += `## ${subtask.id}. ${subtask.title} [${subtask.status || 'pending'}]\n`;
+      
+      // 格式化子任务的依赖项
+      if (subtask.dependencies && subtask.dependencies.length > 0) {
+        // 格式化依赖项
+        content += `### 依赖项：${formattedDeps}\n`;
+      } else {
+        content += '### 依赖项：无\n';
+      }
+      
+      content += `### 描述：${subtask.description || ''}\n`;
+      content += '### 详细信息：\n';
+      content += (subtask.details || '').split('\n').map(line => line).join('\n');
+      content += '\n\n';
+    });
+  }
+  ```
+### 任务列出与显示
+- **筛选与组织**：
+  - ✅ 务必：允许按状态筛选任务。
+  - ✅ 务必：处理列表中子任务的显示。
+  - ✅ 务必：使用一致的表格格式。
+  ```javascript
+  // ✅ 务必：实现清晰的筛选和组织
+  // 如果指定了状态，则按状态筛选任务
+  const filteredTasks = statusFilter 
+    ? data.tasks.filter(task => 
+        task.status && task.status.toLowerCase() === statusFilter.toLowerCase())
+    : data.tasks;
+  ```
+- **进度跟踪**：
+  - ✅ 务必：计算并显示完成统计信息。
+  - ✅ 务必：同时跟踪任务和子任务的完成情况。
+  - ✅ 务必：使用可视化进度指示器。
+  ```javascript
+  // ✅ 务必：跟踪并显示进度
+  // 计算完成统计信息
+  const totalTasks = data.tasks.length;
+  const completedTasks = data.tasks.filter(task => 
+    task.status === 'done' || task.status === 'completed').length;
+  const completionPercentage = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
+  
+  // 统计子任务
+  let totalSubtasks = 0;
+  let completedSubtasks = 0;
+  
+  data.tasks.forEach(task => {
+    if (task.subtasks && task.subtasks.length > 0) {
+      totalSubtasks += task.subtasks.length;
+      completedSubtasks += task.subtasks.filter(st => 
+        st.status === 'done' || st.status === 'completed').length;
+    }
+  });
+  ```
+### 复杂性分析
+- **评分系统**：
+  - ✅ 务必：使用人工智能分析任务复杂性。
+  - ✅ 务必：纳入复杂性评分（1 - 10分）。
+  - ✅ 务必：生成具体的扩展建议。
+  ```javascript
+  // ✅ 务必：正确处理复杂性分析
+  const report = {
+    meta: {
+      generatedAt: new Date().toISOString(),
+      tasksAnalyzed: tasksData.tasks.length,
+      thresholdScore: thresholdScore,
+      projectName: tasksData.meta?.projectName || '你的项目名称',
+      usedResearch: useResearch
+    },
+    complexityAnalysis: complexityAnalysis
+  };
+  ```
+- **基于分析的工作流程**：
+  - ✅ 务必：使用复杂性报告指导任务扩展。
+  - ✅ 务必：优先对复杂任务进行更详细的分解。
+  - ✅ 务必：使用复杂性分析得出的扩展提示。
+  ```javascript
+  // ✅ 务必：将复杂性分析应用于工作流程
+  // 如果存在报告，则按复杂性对任务进行排序，否则按ID排序
+  if (complexityReport && complexityReport.complexityAnalysis) {
+    log('info', '按复杂性对任务进行排序...');
+    
+    // 创建任务ID到复杂性得分的映射
+    const complexityMap = new Map();
+    complexityReport.complexityAnalysis.forEach(analysis => {
+      complexityMap.set(analysis.taskId, analysis.complexityScore);
+    });
+    
+    // 按复杂性得分（从高到低）对任务进行排序
+    tasksToExpand.sort((a, b) => {
+      const scoreA = complexityMap.get(a.id) || 0;
+      const scoreB = complexityMap.get(b.id) || 0;
+      return scoreB - scoreA;
+    });
+  }
+  ```
+### 下一任务选择
+- **资格标准**：
+  - ✅ 务必：在查找下一个任务时考虑依赖项。
+  - ✅ 务必：根据任务优先级和依赖项数量进行优先级排序。
+  - ✅ 务必：跳过已完成的任务。
+  ```javascript
+  // ✅ 务必：使用正确的任务优先级逻辑
+  function findNextTask(tasks) {
+    // 获取所有已完成任务的ID
+    const completedTaskIds = new Set(
+      tasks
+        .filter(t => t.status === 'done' || t.status === 'completed')
+        .map(t => t.id)
+    );
+    
+    // 筛选出所有依赖项都已满足的待办任务
+    const eligibleTasks = tasks.filter(task => 
+      (task.status === 'pending' || task.status === 'in-progress') && 
+      task.dependencies && 
+      task.dependencies.every(depId => completedTaskIds.has(depId))
+    );
+    
+    // 按优先级、依赖项数量和ID进行排序
+    const priorityValues = { 'high': 3,'medium': 2, 'low': 1 };
+    
+    const nextTask = eligibleTasks.sort((a, b) => {
+      // 首先按优先级
+      const priorityA = priorityValues[a.priority ||'medium'] || 2;
+      const priorityB = priorityValues[b.priority ||'medium'] || 2;
+      
+      if (priorityB!== priorityA) {
+        return priorityB - priorityA; // 优先级高的优先
+      }
+      
+      // 其次按依赖项数量
+      if (a.dependencies.length!== b.dependencies.length) {
+        return a.dependencies.length - b.dependencies.length; // 依赖项少的优先
+      }
+      
+      // 最后按ID
+      return a.id - b.id; // ID低的优先
+    })[0];
+    
+    return nextTask;
+  }
+  ```
+有关实现示例，请参考[`task-manager.js`](mdc:scripts/modules/task-manager.js)；有关集成指南，请参考[`new_features.mdc`](mdc:.cursor/rules/new_features.mdc)。 

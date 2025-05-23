@@ -1,0 +1,308 @@
+# Task Master功能集成指南
+## 功能放置决策流程
+- **确定功能类型**（模块详细信息见[`architecture.mdc`](mdc:.cursor/rules/architecture.mdc)）：
+  - **数据操作**：创建、读取、更新或删除任务的功能应位于[`task-manager.js`](mdc:scripts/modules/task-manager.js)。遵循[`tasks.mdc`](mdc:.cursor/rules/tasks.mdc)中的指南。
+  - **依赖管理**：处理任务关系的功能应位于[`dependency-manager.js`](mdc:scripts/modules/dependency-manager.js)。遵循[`dependencies.mdc`](mdc:.cursor/rules/dependencies.mdc)中的指南。
+  - **用户界面**：向用户显示信息的功能应位于[`ui.js`](mdc:scripts/modules/ui.js)。遵循[`ui.mdc`](mdc:.cursor/rules/ui.mdc)中的指南。
+  - **AI集成**：使用AI模型的功能应位于[`ai-services.js`](mdc:scripts/modules/ai-services.js)。
+  - **跨领域功能**：不属于单一类别的功能可能需要多个模块中的组件。
+- **命令行界面**（见[`commands.mdc`](mdc:.cursor/rules/commands.mdc)）：
+  - 所有面向用户的新命令都应添加到[`commands.js`](mdc:scripts/modules/commands.js)。
+  - 使用一致的选项命名和帮助文本模式。
+  - 遵循Commander.js的子命令结构模型。
+## 实现模式
+添加功能的标准模式遵循以下工作流程：
+1. **核心逻辑**：在适当的模块（例如[`task-manager.js`](mdc:scripts/modules/task-manager.js)）中实现业务逻辑。
+2. **AI集成（如适用）**：
+   - 从[`ai-services-unified.js`](mdc:scripts/modules/ai-services-unified.js)导入必要的服务函数（例如`generateTextService`、`streamTextService`）。
+   - 准备参数（`role`、`session`、`systemPrompt`、`prompt`）。
+   - 调用服务函数。
+   - 处理响应（直接文本或流对象）。
+   - **重要提示**：对于发送大量上下文（如字符串化的JSON）且不需要增量显示的调用，优先使用`generateTextService`。详细的使用模式和注意事项见[`ai_services.mdc`](mdc:.cursor/rules/ai_services.mdc)。
+3. **UI组件**：按照[`ui.mdc`](mdc:.cursor/rules/ui.mdc)的要求，将任何显示函数添加到[`ui.js`](mdc:scripts/modules/ui.js)。
+4. **命令集成**：按照[`commands.mdc`](mdc:.cursor/rules/commands.mdc)的要求，将CLI命令添加到[`commands.js`](mdc:scripts/modules/commands.js)。
+5. **测试**：为功能的所有组件编写测试（遵循[`tests.mdc`](mdc:.cursor/rules/tests.mdc)）。
+6. **配置**：在[`config-manager.js`](mdc:scripts/modules/config-manager.js)中更新配置设置或添加新设置，并确保获取器/设置器合适。在[`utilities.mdc`](mdc:.cursor/rules/utilities.mdc)和[`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc)中更新文档。如有必要，更新`.taskmasterconfig`结构。
+7. **文档**：在[`dev_workflow.mdc`](mdc:.cursor/rules/dev_workflow.mdc)和[`taskmaster.mdc`](mdc:.cursor/rules/taskmaster.mdc)中更新帮助文本和文档。
+## 新功能关键检查清单
+- **全面的函数导出**：
+  - ✅ **务必**：从各自的模块中导出新函数或命令所需的所有核心函数、辅助函数（如`generateSubtaskPrompt`）和实用方法。
+  - ✅ **务必**：明确检查文件底部的模块`export { ... }`块，确保包含每个必需的依赖项（即使是看似不重要的辅助函数，如`findTaskById`、`taskExists`、特定的提示生成器、AI调用处理程序等）。
+  - ❌ **切勿**：假设内部函数已被导出，始终进行验证。缺少导出会导致运行时错误（例如`ReferenceError: generateSubtaskPrompt is not defined`）。
+  - **示例**：如果实现一个检查任务是否存在的功能，确保辅助函数在导出列表中：
+  ```javascript
+  // 在模块文件底部：
+  export {
+    // ...现有导出...
+    yourNewFunction,
+    taskExists,  // yourNewFunction使用的辅助函数
+    findTaskById, // yourNewFunction使用的辅助函数
+    generateSubtaskPrompt, // 扩展/添加功能所需的辅助函数
+    getSubtasksFromAI,     // 扩展/添加功能所需的辅助函数
+  };
+  ```
+- **参数完整性和匹配**：
+  - ✅ **务必**：在实现过程中，向调用的函数传递所有必需的参数。
+  - ✅ **务必**：在调用函数之前检查函数签名。
+  - ✅ **务必**：验证直接函数参数与核心函数参数相匹配。
+  - ✅ **务必**：为MCP实现直接函数时，确保它只接受核心函数中存在的参数。
+  - ✅ **务必**：验证复杂对象参数（如`mcpLog`对象，有关所需的日志包装器模式，请参阅mcp.mdc）的预期内部结构。
+  - ❌ **切勿**：向直接函数添加核心函数中不存在的参数。
+  - ❌ **切勿**：假设默认参数值会处理缺失的参数。
+  - ❌ **切勿**：在未验证对象参数所需的内部结构或方法的情况下，就假定它们能正常工作。
+  - **示例**：调用文件生成时，传递所有必需的参数：
+  ```javascript
+  // ✅ 务必：传递所有必需的参数
+  await generateTaskFiles(tasksPath, path.dirname(tasksPath));
+  
+  // ❌ 切勿：省略必需的参数
+  await generateTaskFiles(tasksPath); // 错误 - 缺少outputDir参数
+  ```
+  
+  **示例**：使直接函数参数与核心函数正确匹配：
+  ```javascript
+  // 核心函数签名
+  async function expandTask(tasksPath, taskId, numSubtasks, useResearch = false, additionalContext = '', options = {}) {
+    // 实现...
+  }
+  
+  // ✅ 务必：使直接函数参数与核心函数匹配
+  export async function expandTaskDirect(args, log, context = {}) {
+    // 仅提取核心函数中存在的参数
+    const taskId = parseInt(args.id, 10);
+    const numSubtasks = args.num ? parseInt(args.num, 10) : undefined;
+    const useResearch = args.research === true;
+    const additionalContext = args.prompt || '';
+    
+    // 使用匹配的参数调用核心函数
+    const result = await expandTask(
+      tasksPath,
+      taskId,
+      numSubtasks,
+      useResearch,
+      additionalContext,
+      { mcpLog: log, session: context.session }
+    );
+    
+    // 返回结果
+    return { success: true, data: result, fromCache: false };
+  }
+  
+  // ❌ 切勿：使用核心函数中不存在的参数
+  export async function expandTaskDirect(args, log, context = {}) {
+    // 切勿提取核心函数中不存在的参数！
+    const force = args.force === true; // ❌ 错误 - 'force'不存在于核心函数中
+    
+    // 切勿将不存在的参数传递给核心函数
+    const result = await expandTask(
+      tasksPath,
+      args.id,
+      args.num,
+      args.research,
+      args.prompt,
+      force, // ❌ 错误 - 此参数不存在于核心函数中
+      { mcpLog: log }
+    );
+  }
+  ```
+- **一致的文件路径处理**：
+  - ✅ 务必：使用一致的文件命名约定：`task_${id.toString().padStart(3, '0')}.txt`。
+  - ✅ 务必：使用`path.join()`来组合文件路径。
+  - ✅ 务必：使用适当的文件扩展名（任务用.txt，数据用.json）。
+  - ❌ 切勿：硬编码路径分隔符或使用不一致的文件扩展名。
+  - **示例**：为任务创建文件路径：
+  ```javascript
+  // ✅ 务必：使用一致的文件命名和path.join
+  const taskFileName = path.join(
+    path.dirname(tasksPath), 
+    `task_${taskId.toString().padStart(3, '0')}.txt`
+  );
+  
+  // ❌ 切勿：使用不一致的命名或字符串连接
+  const taskFileName = path.dirname(tasksPath) + '/' + taskId + '.md';
+  ```
+- **错误处理和报告**：
+  - ✅ 务必：使用具有代码和消息属性的结构化错误对象。
+  - ✅ 务必：包含明确的错误消息，指明具体问题。
+  - ✅ 务必：处理特定于函数的错误和潜在的文件系统错误。
+  - ✅ 务必：在适当的严重级别记录错误。
+  - **示例**：核心函数中的结构化错误处理：
+  ```javascript
+  try {
+    // 实现...
+  } catch (error) {
+    log('error', `Error removing task: ${error.message}`);
+    throw {
+      code: 'REMOVE_TASK_ERROR',
+      message: error.message,
+      details: error.stack
+    };
+  }
+  ```
+- **静默模式实现**：
+  - ✅ **务必**：一起导入所有静默模式实用工具：
+    ```javascript
+    import { enableSilentMode, disableSilentMode, isSilentMode } from '../../../../scripts/modules/utils.js';
+    ```
+  - ✅ **务必**：始终使用`isSilentMode()`函数检查全局静默模式状态，切勿引用全局变量。
+  - ✅ **务必**：如果核心函数可能产生无法通过`outputFormat`参数可靠控制的控制台输出（如横幅、微调器、直接的`console.log`），则在直接函数中使用`enableSilentMode()`和`disableSilentMode()`在`try/finally`块中包装核心函数调用。
+    ```javascript
+    // 直接函数示例：
+    try {
+      // 如果核心函数能可靠处理，优先传递'json'
+      const result = await coreFunction(...args, 'json'); 
+      // 或者，如果outputFormat不够或不可靠：
+      // enableSilentMode(); // 在调用前启用
+      // const result = await coreFunction(...args);
+      // disableSilentMode(); // 调用后禁用（通常在finally中）
+      return { success: true, data: result };
+    } catch (error) {
+       log.error(`Error: ${error.message}`);
+       return { success: false, error: { message: error.message } };
+    } finally {
+       // 如果使用了启用/禁用，确保在此处调用禁用
+       // disableSilentMode(); 
+    }
+    ```
+  - ✅ **务必**：核心函数本身理想情况下应在显示UI元素（横幅、微调器、框）之前检查`outputFormat === 'text'`，并使用尊重静默模式的内部日志记录（`log`/`report`）。直接函数中的`enable/disableSilentMode`包装是一种安全措施。
+  - ✅ **务必**：正确处理接受两者（现在不太常见，优先使用`outputFormat`）的函数的混合参数/全局静默模式：
+    ```javascript
+    // 检查传递的参数和全局静默模式
+    const isSilent = silentMode || (typeof silentMode === 'undefined' && isSilentMode());
+    ```
+  - ❌ **切勿**：如果启用了静默模式，忘记在`finally`块中禁用它。
+  - ❌ **切勿**：直接访问全局`silentMode`标志。
+- **调试策略**：
+  - ✅ **务必**：如果MCP工具因模糊错误（例如JSON解析问题，如`Unexpected token ... is not valid JSON`）而失败，**尝试在终端中直接运行等效的CLI命令**（例如`task-master expand --all`）。CLI输出通常会提供更具体的错误消息（如缺少函数定义或核心逻辑的堆栈跟踪），有助于确定根本原因。
+  - ❌ **切勿**：如果错误不明确，不要仅依赖MCP日志；将CLI用作核心逻辑问题的辅助调试工具。
+```javascript
+// 1. 核心逻辑：将函数添加到适当的模块（以task-manager.js为例）
+/**
+ * 将已完成的任务存档到archive.json
+ * @param {string} tasksPath - tasks.json文件的路径
+ * @param {string} archivePath - archive.json文件的路径
+ * @returns {number} 存档的任务数量
+ */
+async function archiveTasks(tasksPath, archivePath = 'tasks/archive.json') {
+  // 实现...
+  return archivedCount;
+// 从模块中导出
+export {
+  // ...现有导出...
+  archiveTasks,
+};
+```
+```javascript
+// 2. AI集成：导入并使用必要的服务函数
+import { generateTextService } from './ai-services-unified.js';
+// 示例用法：
+async function handleAIInteraction() {
+  const role = 'user';
+  const session = 'exampleSession';
+  const systemPrompt = 'You are a helpful assistant.';
+  const prompt = 'What is the capital of France?';
+  const result = await generateTextService(role, session, systemPrompt, prompt);
+  console.log(result);
+// 从模块中导出
+export {
+  // ...现有导出...
+  handleAIInteraction,
+};
+```
+```javascript
+// 3. UI组件：将显示函数添加到ui.js
+/**
+ * 显示存档操作结果
+ * @param {string} archivePath - 存档文件的路径
+ * @param {number} count - 存档的任务数量
+ */
+function displayArchiveResults(archivePath, count) {
+  console.log(boxen(
+    chalk.green(`Successfully archived ${count} tasks to ${archivePath}`),
+    { padding: 1, borderColor: 'green', borderStyle: 'round' }
+  ));
+// 从模块中导出
+export {
+  // ...现有导出...
+  displayArchiveResults,
+};
+```
+```javascript
+// 4. 命令集成：添加到commands.js
+import { archiveTasks } from './task-manager.js';
+import { displayArchiveResults } from './ui.js';
+// 在registerCommands函数中
+programInstance
+  .command('archive')
+  .description('Archive completed tasks to separate file')
+  .option('-f, --file <file>', 'Path to the tasks file', 'tasks/tasks.json')
+  .option('-o, --output <file>', 'Archive output file', 'tasks/archive.json')
+  .action(async (options) => {
+    const tasksPath = options.file;
+    const archivePath = options.output;
+    
+    console.log(chalk.blue(`Archiving completed tasks from ${tasksPath} to ${archivePath}...`));
+    
+    const archivedCount = await archiveTasks(tasksPath, archivePath);
+    displayArchiveResults(archivePath, archivedCount);
+  });
+```
+## 跨模块功能
+对于需要多个模块中的组件的功能：
+- ✅ **务必**：创建清晰的单向依赖流
+  ```javascript
+  // 在task-manager.js中
+  function analyzeTasksDifficulty(tasks) {
+    // 实现...
+    return difficultyScores;
+  }
+  
+  // 在ui.js中 - 依赖于task-manager.js
+  import { analyzeTasksDifficulty } from './task-manager.js';
+  
+  function displayDifficultyReport(tasks) {
+    const scores = analyzeTasksDifficulty(tasks);
+    // 渲染分数...
+  }
+  ```
+- ❌ **切勿**：在模块之间创建循环依赖
+  ```javascript
+  // 在task-manager.js中 - 依赖于ui.js
+  import { displayDifficultyReport } from './ui.js';
+  
+  function analyzeTasks() {
+    // 实现...
+    displayDifficultyReport(tasks); // 错误！不要从task-manager调用UI函数
+  }
+  
+  // 在ui.js中 - 依赖于task-manager.js
+  import { analyzeTasks } from './task-manager.js';
+  ```
+## 命令行界面标准
+- **命名约定**：
+  - 命令名使用短横线分隔（`analyze-complexity`，而不是`analyzeComplexity`）。
+  - 选项名使用短横线分隔（`--output-format`，而不是`--outputFormat`）。
+  - 当选项代表相同概念时，在所有命令中使用相同的选项名。
+- **命令结构**：
+  ```javascript
+  programInstance
+    .command('command-name')
+    .description('Clear, concise description of what the command does')
+    .option('-s, --short-option <value>', 'Option description', 'default value')
+    .option('--long-option <value>', 'Option description')
+    .action(async (options) => {
+      // 命令实现
+    });
+  ```
+## 实用函数指南
+在向[`utils.js`](mdc:scripts/modules/utils.js)添加实用函数时：
+- 仅添加可被多个模块使用的函数。
+- 保持实用函数单一用途且纯粹功能性。
+- 记录参数和返回值。
+```javascript
+/**
+ * 将以毫秒为单位的持续时间格式化为人类可读的字符串
+ * @param {number} ms - 以毫秒为单位的持续时间
+ * @returns {string} 格式化后的持续时间字符串（例如，"2h 30m 15s"）
+ */
+function formatDuration(

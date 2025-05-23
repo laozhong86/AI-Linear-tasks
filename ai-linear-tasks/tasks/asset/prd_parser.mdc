@@ -1,0 +1,99 @@
+---
+description: 解析PRD文档并在Linear中创建相应的任务
+globs: tasks/prd.*
+alwaysApply: true
+---
+# Context
+此规则用于解析PRD文档并自动在Linear中创建对应的任务。它基于claude-task-master的PRD解析机制，但经过优化以适应Linear MCP平台。
+
+# Activation
+当用户在编辑器中打开PRD文档并请求解析时激活。
+
+# Guidance
+作为一个专业的项目经理和需求分析专家，你需要仔细分析PRD文档的内容，提取关键任务信息并创建Linear任务。
+
+遵循以下步骤：
+
+1. 分析PRD文档结构：
+- 识别主要功能模块和特性
+- 理解系统架构和技术要求
+- 确定关键的用户场景和流程
+- 注意项目约束和风险
+
+2. 任务提取原则：
+- 每个主要功能点应对应一个任务
+- 任务粒度要适中，既不过大也不过小
+- 优先级基于业务重要性和技术依赖关系
+- 任务描述要清晰具体，包含可验证的完成标准
+
+3. 输出格式要求：
+每个任务应包含以下信息：
+- title: 简短清晰的任务标题
+- description: 详细的任务描述，包括：
+  * 功能需求
+  * 技术要求
+  * 实现指南
+  * 验收标准
+- priority: 任务优先级 (High/Medium/Low)
+- dependencies: 依赖的其他任务ID
+- status: 初始状态为Backlog
+
+4. Linear任务创建：
+- 使用Linear MCP工具创建任务
+- 设置适当的标签和优先级
+- 建立任务间的依赖关系
+- 分配到正确的项目和团队
+
+# Example
+输入PRD片段：
+```
+功能模块：用户认证
+- 实现基于JWT的认证机制
+- 支持多种登录方式（用户名密码、手机号、社交账号）
+- 提供密码重置和账号恢复功能
+```
+
+输出任务示例：
+{
+  "title": "实现JWT认证基础架构",
+  "description": "### 功能需求\n- 实现JWT token的生成和验证\n- 设计token结构和过期机制\n- 集成到请求中间件\n\n### 技术要求\n- 使用标准JWT库\n- 实现token刷新机制\n- 确保安全性和性能\n\n### 验收标准\n- JWT生成和验证功能正常\n- 过期token能被正确处理\n- 完整的单元测试覆盖",
+  "priority": "high",
+  "dependencies": [],
+  "status": "backlog"
+}
+
+# Implementation Notes
+1. 使用Linear MCP工具创建任务：
+```javascript
+await mcp.linear.createIssue({
+  title,
+  description,
+  priority,
+  teamId,
+  projectId,
+  labelIds
+});
+```
+
+2. 任务优先级映射：
+- High -> 1
+- Medium -> 2
+- Low -> 3
+
+3. 状态映射：
+- Backlog -> 初始状态
+- In Progress -> 开发中
+- In Review -> 评审中
+- Done -> 已完成
+
+# Best Practices
+1. 任务描述应包含充分的上下文信息
+2. 使用markdown格式化任务描述
+3. 明确标注技术要求和依赖关系
+4. 设置合理的任务优先级
+5. 保持任务粒度的一致性
+
+# References
+- Linear API文档
+- JWT最佳实践指南
+- 项目开发规范
